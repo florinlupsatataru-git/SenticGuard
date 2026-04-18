@@ -5,7 +5,7 @@ from newspaper import Article
 # --- 1. CONFIGURARE PAGINĂ ---
 st.set_page_config(page_title="Detector Deep-Alarmism", page_icon="🔍", layout="wide")
 
-# --- 2. GESTIONARE STARE (SESSION STATE) ---
+# --- 2. GESTIONARE STARE ---
 if 'input_text' not in st.session_state:
     st.session_state.input_text = ""
 
@@ -13,121 +13,118 @@ def sterge_text():
     st.session_state.input_text = ""
 
 # --- 3. ÎNCĂRCARE MODEL CU CACHE ---
-#@st.cache_resource
-#def load_model():
-#    model_path = "./model_alarmism_final"
-#    try:
-#        tokenizer = AutoTokenizer.from_pretrained(model_path)
-#        model = AutoModelForSequenceClassification.from_pretrained(model_path)
-#        return pipeline("text-classification", model=model, tokenizer=tokenizer)
-#    except Exception as e:
-#        st.error(f"Eroare: Modelul nu a fost găsit în {model_path}. Detalii: {e}")
-#        return None
-
 @st.cache_resource
 def load_model():
+    # MODIFICAT: Calea către Hugging Face
     model_path = "florin-lupsa/NewsAnalyzer" 
     try:
-        # Pipeline-ul va descărca automat fișierele de pe Hugging Face la prima rulare online
+        # Pipeline-ul descarcă automat de pe HF dacă nu găsește local
         return pipeline("text-classification", model=model_path, tokenizer=model_path)
     except Exception as e:
-        st.error(f"Eroare la încărcarea modelului de pe Hugging Face: {e}")
+        st.error(f"Eroare la încărcarea modelului: {e}")
         return None
 
 cls_pipeline = load_model()
 
 # --- 4. INTERFAȚA UTILIZATOR ---
 st.title("🔍 Analizor de Știri - Deep Analysis")
-st.markdown("Acest instrument analizează atât **titlul**, cât și **conținutul** articolului pentru a detecta discrepanțe de tip clickbait.")
+st.markdown("Analizează **titlul** și **conținutul** pentru a detecta alarmismul și discrepanțele de tip clickbait.")
 
-input_utilizator = st.text_input(
-    "Introdu un Titlu sau un Link către un articol:", 
-    key="input_text"
-)
+input_text = st.text_area("Introdu link-ul știrii sau textul complet:", 
+                          value=st.session_state.input_text, 
+                          height=150, key="input_area")
 
-# Coloane pentru butoanele principale
-col_btn1, col_btn2 = st.columns([1, 1])
+col1, col2 = st.columns([1, 5])
+with col1:
+    buton_analiza = st.button("🚀 Analizează")
+with col2:
+    st.button("🗑️ Șterge tot", on_click=sterge_text)
 
-analizeaza = False
-with col_btn1:
-    if st.button("🚀 Analizează Deep", use_container_width=True, type="primary"):
-        analizeaza = True
-
-with col_btn2:
-    if st.session_state.input_text != "":
-        st.button("🧹 Reset / Golește", on_click=sterge_text, use_container_width=True)
-
-# --- 5. LOGICA DE PROCESARE ---
-if analizeaza and input_utilizator:
-    titlu_final = ""
-    text_articol = ""
-    
-    # Verificăm dacă este link sau text simplu
-    if input_utilizator.startswith("http"):
-        try:
-            with st.spinner('Se descarcă și se analizează articolul complet...'):
-                articol = Article(input_utilizator)
-                articol.download()
-                articol.parse()
-                
-                titlu_final = articol.title
-                # Luăm primele 1200 de caractere pentru a nu bloca modelul BERT
-                text_articol = articol.text[:1200]
-                
-                st.info(f"**Titlu detectat:** {titlu_final}")
-        except Exception as e:
-            st.error(f"Eroare la procesarea link-ului: {e}")
-    else:
-        titlu_final = input_utilizator
-        # În cazul textului simplu, nu avem conținut separat
-
-    # --- 6. ANALIZA AI ---
-    if titlu_final:
-        # Analiză Titlu
-        rez_titlu = cls_pipeline(titlu_final)[0]
-        scor_titlu = rez_titlu['score'] * 100
+# --- 5. LOGICA DE ANALIZĂ ---
+if buton_analiza:
+    if input_text:
+        text_to_check = input_text
+        content_extracted = False
         
-        # Dacă avem și text de articol, facem Deep Analysis
-        if text_articol:
-            rez_text = cls_pipeline(text_articol)[0]
-            scor_text = rez_text['score'] * 100
-            
-            # Afișăm metricile comparativ
-            st.divider()
-            m1, m2 = st.columns(2)
-            with m1:
-                st.metric(label="Probabilitate Alarmism Titlu", value=f"{scor_titlu:.1f}%")
-            with m2:
-                st.metric(label="Probabilitate Alarmism Conținut", value=f"{scor_text:.1f}%")
-            
-            # Verificăm discrepanța (Clickbait)
-            if rez_titlu['label'] == "LABEL_1" and rez_text['label'] == "LABEL_0" and (scor_titlu - scor_text) > 40:
-                st.warning("⚠️ **DETECȚIE CLICKBAIT:** Titlul este disproporționat de alarmist față de textul articolului!")
-            
-            # Scor final mediu
-            scor_final = (scor_titlu + scor_text) / 2
-            label_final = "LABEL_1" if scor_final > 50 else "LABEL_0"
-        else:
-            # Dacă e doar text simplu
-            scor_final = scor_titlu
-            label_final = rez_titlu['label']
+        # Extracție conținut dacă e URL
+        if input_text.startswith(("http://", "https://")):
+            with st.spinner("Se extrage conținutul articolului..."):
+                try:
+                    article = Article(input_text)
+                    article.download()
+                    article.parse()
+                    title = article.title
+                    text = article.text
+                    content_extracted = True
+                    st.info(f"**Titlu Detectat:** {title}")
+                except Exception as e:
+                    st.error(f"Nu s-a putut accesa link-ul. Eroare: {e}")
+                    text_to_check = input_text
 
-        # --- 7. AFIȘARE VERDICT FINAL ---
+        # --- 6. ANALIZĂ AI ---
+        with st.spinner("AI-ul analizează stilul limbajului..."):
+            if content_extracted:
+                # Analizăm titlul și textul separat
+                rez_titlu = cls_pipeline(title)[0]
+                rez_text = cls_pipeline(text)[0]
+                
+                scor_titlu = rez_titlu['score'] * 100
+                label_titlu = rez_titlu['label']
+                
+                scor_text = rez_text['score'] * 100
+                label_text = rez_text['label']
+            else:
+                # Analizăm doar input-ul ca titlu/text unitar
+                rez_titlu = cls_pipeline(text_to_check)[0]
+                scor_titlu = rez_titlu['score'] * 100
+                label_titlu = rez_titlu['label']
+                label_text = None
+
+        # --- 7. AFIȘARE REZULTATE DETALIATE ---
+        st.divider()
+        
+        # Secțiune Titlu
+        if label_titlu == "LABEL_1":
+            st.error(f"🚩 **TITLU ALARMIST** (Încredere: {scor_titlu:.2f}%)")
+        else:
+            st.success(f"✅ **TITLU INFORMATIV** (Încredere: {scor_titlu:.2f}%)")
+
+        if content_extracted:
+            # Secțiune Conținut
+            if label_text == "LABEL_1":
+                st.error(f"🚩 **CONȚINUT ALARMIST** (Încredere: {scor_text:.2f}%)")
+            else:
+                st.success(f"✅ **CONȚINUT INFORMATIV** (Încredere: {scor_text:.2f}%)")
+            
+            # Detecție Clickbait (Dacă titlul e alarmist dar textul e informativ)
+            if label_titlu == "LABEL_1" and label_text == "LABEL_0":
+                st.warning("⚠️ **ALERTA CLICKBAIT:** Titlul este alarmist, deși conținutul este unul neutru/informativ!")
+            
+            # Calcul Verdict Final
+            # Dacă oricare dintre ele e LABEL_1, considerăm un risc de alarmism
+            if label_titlu == "LABEL_1" or label_text == "LABEL_1":
+                label_final = "LABEL_1"
+                scor_final = max(scor_titlu, scor_text)
+            else:
+                label_final = "LABEL_0"
+                scor_final = (scor_titlu + scor_text) / 2
+        else:
+            label_final = label_titlu
+            scor_final = scor_titlu
+
+        # --- 8. AFIȘARE VERDICT FINAL ---
         st.divider()
         if label_final == "LABEL_1":
-            st.error("**Verdict Final: ALARMIST 🚩**")
-            st.markdown(f"Nivel de încredere al modelului: **{scor_final:.2f}%**")
+            st.error("### **Verdict Final: ALARMIST 🚩**")
+            st.write(f"Gradul de certitudine al AI-ului: **{scor_final:.2f}%**")
             st.progress(scor_final / 100)
-            st.caption("Notă: Acest procent reprezintă gradul de certitudine al AI-ului privind stilul senzaționalist, nu veridicitatea faptelor.")
         else:
-            st.success("**Verdict Final: INFORMATIV ✅**")
-            st.markdown(f"Nivel de încredere al modelului: **{scor_final:.2f}%**")
+            st.success("### **Verdict Final: INFORMATIV ✅**")
+            st.write(f"Gradul de certitudine al AI-ului: **{scor_final:.2f}%**")
             st.progress(scor_final / 100)
     else:
-        st.warning("Te rugăm să introduci un conținut valid.")
+        st.warning("Te rugăm să introduci un link sau un text pentru analiză.")
 
-# --- 8. SIDEBAR ---
+# --- 9. SIDEBAR ---
 st.sidebar.title("Despre Proiect")
-st.sidebar.info("Acest detector folosește un model **BERT Romanian** antrenat să facă distincția între jurnalismul factual și cel senzaționalist.")
-st.sidebar.markdown("---")
-st.sidebar.write("📌 **Deep Analysis:** Când introduci un link, sistemul compară titlul cu primele paragrafe pentru a identifica manipularea prin clickbait.")
+st.sidebar.info("Modelul folosește un transformer BERT antrenat special pe știri din România pentru a distinge între jurnalism informativ și clickbait/alarmism.")
