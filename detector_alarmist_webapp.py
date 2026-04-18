@@ -13,17 +13,6 @@ def sterge_text():
     st.session_state.input_text = ""
 
 # --- 3. ÎNCĂRCARE MODEL CU CACHE ---
-#@st.cache_resource
-#def load_model():
-#    model_path = "./model_alarmism_final"
-#    try:
-#        tokenizer = AutoTokenizer.from_pretrained(model_path)
-#        model = AutoModelForSequenceClassification.from_pretrained(model_path)
-#        return pipeline("text-classification", model=model, tokenizer=tokenizer)
-#    except Exception as e:
-#        st.error(f"Eroare: Modelul nu a fost găsit în {model_path}. Detalii: {e}")
-#        return None
-
 @st.cache_resource
 def load_model():
     model_path = "florin-lupsa/NewsAnalyzer" 
@@ -81,7 +70,7 @@ if analizeaza and input_utilizator:
         titlu_final = input_utilizator
         # În cazul textului simplu, nu avem conținut separat
 
-    # --- 6. ANALIZA AI ---
+# --- 6. ANALIZA AI ---
     if titlu_final:
         # Analiză Titlu
         rez_titlu = cls_pipeline(titlu_final)[0]
@@ -96,17 +85,26 @@ if analizeaza and input_utilizator:
             st.divider()
             m1, m2 = st.columns(2)
             with m1:
-                st.metric(label="Probabilitate Alarmism Titlu", value=f"{scor_titlu:.1f}%")
+                # Modificat eticheta pentru claritate: scorul reprezintă certitudinea pentru eticheta detectată
+                label_display_t = "Alarmism" if rez_titlu['label'] == "LABEL_1" else "Informativ"
+                st.metric(label=f"Certitudine {label_display_t} Titlu", value=f"{scor_titlu:.1f}%")
             with m2:
-                st.metric(label="Probabilitate Alarmism Conținut", value=f"{scor_text:.1f}%")
+                label_display_x = "Alarmism" if rez_text['label'] == "LABEL_1" else "Informativ"
+                st.metric(label=f"Certitudine {label_display_x} Conținut", value=f"{scor_text:.1f}%")
             
             # Verificăm discrepanța (Clickbait)
-            if rez_titlu['label'] == "LABEL_1" and rez_text['label'] == "LABEL_0" and (scor_titlu - scor_text) > 40:
+            # Am păstrat condiția de scor > 40 doar ca factor de diferență, dar verificăm etichetele corect
+            if rez_titlu['label'] == "LABEL_1" and rez_text['label'] == "LABEL_0":
                 st.warning("⚠️ **DETECȚIE CLICKBAIT:** Titlul este disproporționat de alarmist față de textul articolului!")
             
             # Scor final mediu
             scor_final = (scor_titlu + scor_text) / 2
-            label_final = "LABEL_1" if scor_final > 50 else "LABEL_0"
+            # label_final = "LABEL_1" if scor_final > 50 else "LABEL_0"
+            # NOU: Verdictul final se bazează pe etichetele primite, nu pe pragul de 50
+            if rez_titlu['label'] == "LABEL_1" or rez_text['label'] == "LABEL_1":
+                label_final = "LABEL_1"
+            else:
+                label_final = "LABEL_0"
         else:
             # Dacă e doar text simplu
             scor_final = scor_titlu
@@ -125,7 +123,6 @@ if analizeaza and input_utilizator:
             st.progress(scor_final / 100)
     else:
         st.warning("Te rugăm să introduci un conținut valid.")
-
 # --- 8. SIDEBAR ---
 st.sidebar.title("Despre Proiect")
 st.sidebar.info("Acest detector folosește un model **BERT Romanian** antrenat să facă distincția între jurnalismul factual și cel senzaționalist.")
