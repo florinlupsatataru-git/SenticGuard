@@ -3,7 +3,7 @@ from transformers import AutoTokenizer, AutoModelForSequenceClassification, pipe
 from newspaper import Article
 
 # --- 1. CONFIGURARE PAGINĂ ---
-st.set_page_config(page_title="Detector Deep-Alarmism", page_icon="🔍", layout="wide")
+st.set_page_config(page_title="SenticGuard AI: Ethical Integrity Check", page_icon="🔍", layout="wide")
 
 # --- 2. GESTIONARE STARE (SESSION STATE) ---
 if 'input_text' not in st.session_state:
@@ -26,8 +26,8 @@ def load_model():
 cls_pipeline = load_model()
 
 # --- 4. INTERFAȚA UTILIZATOR ---
-st.title("🔍 Analizor de Știri")
-st.markdown("Acest instrument analizează atât **titlul**, cât și **conținutul** unui articol pentru a detecta discrepanțe de tip clickbait.")
+st.title("🔍 SenticGuard AI: Ethical Integrity Check")
+st.markdown("Acest sistem avansat analizează corelația dintre **titlu** și **conținut**, evaluând amprenta emoțională și integritatea etică a materialelor jurnalistice pentru a identifica tentativele de manipulare.")
 
 input_utilizator = st.text_input(
     "Introdu un Titlu sau un Link către un articol:", 
