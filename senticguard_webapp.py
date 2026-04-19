@@ -26,8 +26,8 @@ def load_model():
 cls_pipeline = load_model()
 
 # --- 4. INTERFAȚA UTILIZATOR ---
-st.title("🔍 Analizor de Știri - Deep Analysis")
-st.markdown("Acest instrument analizează atât **titlul**, cât și **conținutul** articolului pentru a detecta discrepanțe de tip clickbait.")
+st.title("🔍 Analizor de Știri")
+st.markdown("Acest instrument analizează atât **titlul**, cât și **conținutul** unui articol pentru a detecta discrepanțe de tip clickbait.")
 
 input_utilizator = st.text_input(
     "Introdu un Titlu sau un Link către un articol:", 
@@ -39,7 +39,7 @@ col_btn1, col_btn2 = st.columns([1, 1])
 
 analizeaza = False
 with col_btn1:
-    if st.button("🚀 Analizează Deep", use_container_width=True, type="primary"):
+    if st.button("🚀 Analizează", use_container_width=True, type="primary"):
         analizeaza = True
 
 with col_btn2:
@@ -126,4 +126,4 @@ if analizeaza and input_utilizator:
 st.sidebar.title("Despre Proiect")
 st.sidebar.info("Acest detector folosește un model **BERT Romanian** antrenat să facă distincția între jurnalismul factual și cel senzaționalist.")
 st.sidebar.markdown("---")
-st.sidebar.write("📌 **Deep Analysis:** Când introduci un link, sistemul compară titlul cu primele paragrafe pentru a identifica manipularea prin clickbait.")
+st.sidebar.write("📌 **Analiza:** Când introduci un link, sistemul compară titlul cu primele paragrafe pentru a identifica manipularea prin clickbait.")
