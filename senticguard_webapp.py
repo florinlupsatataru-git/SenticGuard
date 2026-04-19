@@ -2,17 +2,17 @@ import streamlit as st
 from transformers import AutoTokenizer, AutoModelForSequenceClassification, pipeline
 from newspaper import Article
 
-# --- 1. CONFIGURARE PAGINĂ ---
+# --- 1. PAGE CONFIG ---
 st.set_page_config(page_title="SenticGuard AI: Ethical Integrity Check", page_icon="🔍", layout="wide")
 
-# --- 2. GESTIONARE STARE (SESSION STATE) ---
+# --- 2. SESSION STATE ---
 if 'input_text' not in st.session_state:
     st.session_state.input_text = ""
 
 def sterge_text():
     st.session_state.input_text = ""
 
-# --- 3. ÎNCĂRCARE MODEL CU CACHE ---
+# --- 3. MODEL LOAD WITH CACHE ---
 @st.cache_resource
 def load_model():
     model_path = "florin-lupsa/NewsAnalyzer" 
@@ -25,7 +25,7 @@ def load_model():
 
 cls_pipeline = load_model()
 
-# --- 4. INTERFAȚA UTILIZATOR ---
+# --- 4. USER INTERFACE ---
 st.title("🔍 SenticGuard AI: Ethical Integrity Check")
 st.markdown("Acest sistem avansat analizează corelația dintre **titlu** și **conținut**, evaluând amprenta emoțională și integritatea etică a materialelor jurnalistice pentru a identifica tentativele de manipulare.")
 
@@ -46,12 +46,12 @@ with col_btn2:
     if st.session_state.input_text != "":
         st.button("🧹 Reset / Golește", on_click=sterge_text, use_container_width=True)
 
-# --- 5. LOGICA DE PROCESARE ---
+# --- 5. PROCESSING LOGIC ---
 if analizeaza and input_utilizator:
     titlu_final = ""
     text_articol = ""
     
-    # Verificăm dacă este link sau text simplu
+    #  is that a link or text
     if input_utilizator.startswith("http"):
         try:
             with st.spinner('Se descarcă și se analizează articolul complet...'):
@@ -70,46 +70,46 @@ if analizeaza and input_utilizator:
         titlu_final = input_utilizator
         # În cazul textului simplu, nu avem conținut separat
 
-# --- 6. ANALIZA AI ---
+# --- 6. AI EVALUATION ---
     if titlu_final:
-        # Analiză Titlu
+        # TITLE
         rez_titlu = cls_pipeline(titlu_final)[0]
         scor_titlu = rez_titlu['score'] * 100
         
-        # Dacă avem și text de articol, facem Deep Analysis
+        # IS THERE AN ARTICOLE CONTENT, Deep Analysis IS DONE
         if text_articol:
             rez_text = cls_pipeline(text_articol)[0]
             scor_text = rez_text['score'] * 100
             
-            # Afișăm metricile comparativ
+            # COMPARING METRICS
             st.divider()
             m1, m2 = st.columns(2)
             with m1:
-                # Modificat: Afișăm încrederea în funcție de ce etichetă a ales modelul
+                # Display confidence based on which label the model chose
                 tip_t = "Alarmism" if rez_titlu['label'] == "LABEL_1" else "Informativ"
                 st.metric(label=f"Certitudine {tip_t} (Titlu)", value=f"{scor_titlu:.1f}%")
             with m2:
                 tip_x = "Alarmism" if rez_text['label'] == "LABEL_1" else "Informativ"
                 st.metric(label=f"Certitudine {tip_x} (Conținut)", value=f"{scor_text:.1f}%")
             
-            # Verificăm discrepanța (Clickbait)
+            # Clickbait check
             if rez_titlu['label'] == "LABEL_1" and rez_text['label'] == "LABEL_0":
                 st.warning("⚠️ **DETECȚIE CLICKBAIT:** Titlul este disproporționat de alarmist față de textul articolului!")
             
-            # Scor final mediu
+            # Average final score
             scor_final = (scor_titlu + scor_text) / 2
             # label_final = "LABEL_1" if scor_final > 50 else "LABEL_0"
-            # NOU: Verdictul se bazează pe etichete. Dacă ambele sunt informative, finalul e informativ.
+            # The verdict is based on the labels. If both are informative, the ending is informative.
             if rez_titlu['label'] == "LABEL_1" or rez_text['label'] == "LABEL_1":
                 label_final = "LABEL_1"
             else:
                 label_final = "LABEL_0"
         else:
-            # Dacă e doar text simplu
+            # If it's just plain text
             scor_final = scor_titlu
             label_final = rez_titlu['label']
 
-        # --- 7. AFIȘARE VERDICT FINAL ---
+        # --- 7. VERDICT FINAL DISPLAY ---
         st.divider()
         if label_final == "LABEL_1":
             st.error("**Verdict Final: ALARMIST 🚩**")
