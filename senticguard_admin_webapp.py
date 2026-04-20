@@ -32,7 +32,7 @@ if not st.session_state["authenticated"]:
 #        return None
 
 @st.cache_resource
-def load_trained_model_from_drive():
+def load_classifier():
     save_path = "./model_temp"
     if not os.path.exists(save_path):
         os.makedirs(save_path)
