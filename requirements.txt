@@ -8,3 +8,4 @@ feedparser
 st-gsheets-connection
 gspread
 google-auth
+gdown
