@@ -25,6 +25,23 @@ def load_model():
 
 cls_pipeline = load_model()
 
+# 3. LOGIC FOR BROSWER EXTENSION
+# Check if the 'predict_text' parameter exists in the URL
+query_params = st.query_params
+if "predict_text" in query_params:
+    text_to_analyze = query_params["predict_text"]
+    
+    if classifier:
+        # The AI ​​makes the prediction for the title sent by the extension
+        prediction = classifier(text_to_analyze)[0]
+        
+        # Send result back as JSON text
+        st.write(json.dumps(prediction))
+        
+        # st.stop() stops displaying the rest of the page (buttons, titles, etc.)
+        # This way the extension only receives the JSON, not the entire web page.
+        st.stop()
+
 # --- 4. USER INTERFACE ---
 st.title("🔍 SenticGuard AI: Ethical Integrity Check")
 st.markdown("Acest sistem avansat analizează corelația dintre **titlu** și **conținut**, evaluând amprenta emoțională și integritatea etică a materialelor jurnalistice pentru a identifica tentativele de manipulare.")
