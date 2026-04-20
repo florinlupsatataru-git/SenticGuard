@@ -129,7 +129,7 @@ if "temp_df" in st.session_state:
             # Trust score display
             st.write(f"{conf_color} {score:.2%}")
             # Small progress bar below the score
-            st.progress(score)
+            #st.progress(score)
         
         updated_labels.append(1 if is_alarmist else 0)
 
