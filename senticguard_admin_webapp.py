@@ -25,13 +25,6 @@ if not st.session_state["authenticated"]:
     st.stop()
 
 # 2. Model loading for prediction
-#@st.cache_resource
-#def load_classifier():
-#    model_path = "/content/drive/MyDrive/NewsAnalyzer/model_alarmism_final"
-#    try:
-#        return pipeline("text-classification", model=model_path, tokenizer=model_path)
-#    except:
-#        return None
 
 @st.cache_resource
 def load_classifier():
@@ -95,23 +88,32 @@ if st.button("Aduceți titluri noi"):
         st.session_state.temp_df = pd.DataFrame(new_data)
 
 if "temp_df" in st.session_state:
-    # Calculăm statistici rapide
-    nr_alarmiste = st.session_state.temp_df["ai_suggested"].sum()
-    st.metric("Detecție AI", f"{nr_alarmiste} știri alarmiste", f"{len(st.session_state.temp_df)} total")
+    st.write("### 📝 Analiză și Validare")
     
-    st.info("💡 AI-ul a bifat automat titlurile suspecte. Corectează manual unde este cazul!")
-
     updated_labels = []
     for index, row in st.session_state.temp_df.iterrows():
-        col1, col2 = st.columns([0.1, 0.9])
+        # Extract score and color based on confidence
+        score = row["ai_score"]
+        conf_color = "🔴" if score > 0.8 else "🟡" if score > 0.6 else "⚪"
+        
+        col1, col2, col3 = st.columns([0.1, 0.7, 0.2])
+        
         with col1:
-            # Checkbox-ul pornește bifat dacă ai_suggested e True
-            is_alarmist = st.checkbox("Alarmist", value=row["ai_suggested"], key=f"check_{index}")
+            # Automatic check mark
+            is_alarmist = st.checkbox("A", value=row["ai_suggested"], key=f"check_{index}", help="Bifează dacă este alarmist")
+        
         with col2:
+            # Text with alert indicator if applicable
             if row["ai_suggested"]:
                 st.markdown(f"🚩 **{row['text']}**")
             else:
-                st.write(row["text"])
+                st.write(row[ "text"])
+        
+        with col3:
+            # Trust score display
+            st.write(f"{conf_color} {score:.2%}")
+            # Small progress bar below the score
+            st.progress(score)
         
         updated_labels.append(1 if is_alarmist else 0)
 
