@@ -38,7 +38,10 @@ RSS_FEEDS = {
     "Mediafax": "https://www.mediafax.ro/rss",
     "Hotnews": "https://www.hotnews.ro/rss",
     "Digi24": "https://www.digi24.ro/rss",
-    "G4Media": "https://www.g4media.ro/feed"
+    "G4Media": "https://www.g4media.ro/feed",
+    "Libertatea": "https://www.libertatea.ro/feed",
+    "Stirile ProTV": "https://stirileprotv.ro/rss",
+    "Antena 3": "https://www.antena3.ro/rss"
 }
 
 sursa = st.selectbox("Alege sursa de știri:", list(RSS_FEEDS.keys()))
