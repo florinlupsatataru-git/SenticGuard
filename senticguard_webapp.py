@@ -6,142 +6,125 @@ from newspaper import Article
 # --- 1. PAGE CONFIG ---
 st.set_page_config(page_title="SenticGuard AI: Ethical Integrity Check", page_icon="🔍", layout="wide")
 
-# --- 2. SESSION STATE ---
+# --- 2. CONFIGURAȚIE CATEGORII (Mapping & UI) ---
+CATEGORIES = {
+    "OBIECTIV": {"color": "#28a745", "icon": "✅", "desc": "Știre neutră, bazată pe fapte și date verificabile."},
+    "ALARMIST": {"color": "#dc3545", "icon": "🚩", "desc": "Conținut care încearcă să inducă teamă sau panică nejustificată."},
+    "SENZATIONAL": {"color": "#fd7e14", "icon": "💥", "desc": "Titlu de tip clickbait conceput pentru a atrage click-uri prin curiozitate."},
+    "CONFLICTUAL": {"color": "#6f42c1", "icon": "⚔️", "desc": "Știre care alimentează scandalul, revolta sau polarizarea socială."},
+    "INFORMATIV": {"color": "#007bff", "icon": "ℹ️", "desc": "Conținut utilitar, ghiduri practice, rețete sau sfaturi."},
+    "OPINIE": {"color": "#6c757d", "icon": "✍️", "desc": "Perspectivă subiectivă, editorial sau analiză personală."}
+}
+
+# --- 3. SESSION STATE ---
 if 'input_text' not in st.session_state:
     st.session_state.input_text = ""
 
 def sterge_text():
     st.session_state.input_text = ""
 
-# --- 3. MODEL LOAD WITH CACHE ---
+# --- 4. MODEL LOAD WITH CACHE ---
 @st.cache_resource
 def load_model():
     model_path = "florin-lupsa/NewsAnalyzer" 
     try:
-        # Pipeline-ul va descărca automat fișierele de pe Hugging Face la prima rulare online
         return pipeline("text-classification", model=model_path, tokenizer=model_path)
     except Exception as e:
-        st.error(f"Eroare la încărcarea modelului de pe Hugging Face: {e}")
+        st.error(f"Eroare la încărcarea modelului: {e}")
         return None
 
 cls_pipeline = load_model()
 
-# 3. LOGIC FOR BROSWER EXTENSION
-# Check if the 'predict_text' parameter exists in the URL
+# --- 5. LOGIC FOR BROWSER EXTENSION ---
 query_params = st.query_params
 if "predict_text" in query_params:
     text_to_analyze = query_params["predict_text"]
-    
     if cls_pipeline:
-        # The AI ​​makes the prediction for the title sent by the extension
-        prediction = cls_pipeline(text_to_analyze)[0]
-        
-        # Send result back as JSON text
-        st.write(json.dumps(prediction))
-        
-        # st.stop() stops displaying the rest of the page (buttons, titles, etc.)
-        # This way the extension only receives the JSON, not the entire web page.
+        prediction = cls_pipeline(text_to_analyze[:512])[0]
+        # Trimitem JSON-ul înapoi către extensie
+        st.json({
+            "label": prediction['label'],
+            "score": float(prediction['score']),
+            "color": CATEGORIES.get(prediction['label'], {"color": "#333"})["color"]
+        })
         st.stop()
 
-# --- 4. USER INTERFACE ---
-st.title("🔍 SenticGuard AI: Ethical Integrity Check")
-st.markdown("Acest sistem avansat analizează corelația dintre **titlu** și **conținut**, evaluând amprenta emoțională și integritatea etică a materialelor jurnalistice pentru a identifica tentativele de manipulare.")
+# --- UI PRINCIPALĂ ---
+st.title("🛡️ SenticGuard AI")
+st.markdown("### Detector de Integritate și Stil Jurnalistic v2.0")
+st.write("Analizează titluri sau articole pentru a identifica intenția și tonul comunicării.")
 
-input_utilizator = st.text_input(
-    "Introdu un Titlu sau un Link către un articol:", 
-    key="input_text"
-)
+# --- 6. INPUT SECTION ---
+input_mode = st.radio("Alege metoda de analiză:", ["Titlu / Text manual", "Link Articol (URL)"])
 
-# Coloane pentru butoanele principale
-col_btn1, col_btn2 = st.columns([1, 1])
-
-analizeaza = False
-with col_btn1:
-    if st.button("🚀 Analizează", use_container_width=True, type="primary"):
-        analizeaza = True
-
-with col_btn2:
-    if st.session_state.input_text != "":
-        st.button("🧹 Reset / Golește", on_click=sterge_text, use_container_width=True)
-
-# --- 5. PROCESSING LOGIC ---
-if analizeaza and input_utilizator:
-    titlu_final = ""
-    text_articol = ""
-    
-    #  is that a link or text
-    if input_utilizator.startswith("http"):
+if input_mode == "Link Articol (URL)":
+    url = st.text_input("Introdu URL-ul știrii:")
+    if url:
         try:
-            with st.spinner('Se descarcă și se analizează articolul complet...'):
-                articol = Article(input_utilizator)
-                articol.download()
-                articol.parse()
-                
-                titlu_final = articol.title
-                # Luăm primele 1200 de caractere pentru a nu bloca modelul BERT
-                text_articol = articol.text[:1200]
-                
-                st.info(f"**Titlu detectat:** {titlu_final}")
+            article = Article(url)
+            article.download()
+            article.parse()
+            titlu_analiza = article.title
+            text_analiza = article.text
+            st.info(f"**Titlu detectat:** {titlu_analiza}")
         except Exception as e:
-            st.error(f"Eroare la procesarea link-ului: {e}")
-    else:
-        titlu_final = input_utilizator
-        # În cazul textului simplu, nu avem conținut separat
+            st.error(f"Nu s-a putut procesa URL-ul: {e}")
+            titlu_analiza, text_analiza = "", ""
+else:
+    titlu_analiza = st.text_area("Introdu titlul sau textul aici:", value=st.session_state.input_text, height=150)
+    text_analiza = ""
 
-# --- 6. AI EVALUATION ---
-    if titlu_final:
-        # TITLE
-        rez_titlu = cls_pipeline(titlu_final)[0]
-        scor_titlu = rez_titlu['score'] * 100
-        
-        # IS THERE AN ARTICOLE CONTENT, Deep Analysis IS DONE
-        if text_articol:
-            rez_text = cls_pipeline(text_articol)[0]
-            scor_text = rez_text['score'] * 100
-            
-            # COMPARING METRICS
-            st.divider()
-            m1, m2 = st.columns(2)
-            with m1:
-                # Display confidence based on which label the model chose
-                tip_t = "Alarmism" if rez_titlu['label'] == "LABEL_1" else "Informativ"
-                st.metric(label=f"Certitudine {tip_t} (Titlu)", value=f"{scor_titlu:.1f}%")
-            with m2:
-                tip_x = "Alarmism" if rez_text['label'] == "LABEL_1" else "Informativ"
-                st.metric(label=f"Certitudine {tip_x} (Conținut)", value=f"{scor_text:.1f}%")
-            
-            # Clickbait check
-            if rez_titlu['label'] == "LABEL_1" and rez_text['label'] == "LABEL_0":
-                st.warning("⚠️ **DETECȚIE CLICKBAIT:** Titlul este disproporționat de alarmist față de textul articolului!")
-            
-            # Average final score
-            scor_final = (scor_titlu + scor_text) / 2
-            # label_final = "LABEL_1" if scor_final > 50 else "LABEL_0"
-            # The verdict is based on the labels. If both are informative, the ending is informative.
-            if rez_titlu['label'] == "LABEL_1" or rez_text['label'] == "LABEL_1":
-                label_final = "LABEL_1"
-            else:
-                label_final = "LABEL_0"
-        else:
-            # If it's just plain text
-            scor_final = scor_titlu
+# --- 7. ANALIZĂ ---
+if st.button("Analizează Conținutul"):
+    if titlu_analiza and cls_pipeline:
+        with st.spinner('SenticGuard analizează textul...'):
+            # Analiză Titlu
+            rez_titlu = cls_pipeline(titlu_analiza[:512])[0]
             label_final = rez_titlu['label']
+            scor_final = rez_titlu['score'] * 100
 
-        # --- 7. VERDICT FINAL DISPLAY ---
+            # Dacă avem și text lung din URL, îl analizăm și pe acela
+            if text_analiza:
+                rez_text = cls_pipeline(text_analiza[:512])[0]
+                # Prioritizăm titlul dacă acesta este marcat ca alarmist/senzațional, 
+                # altfel facem o pondere (titlul contează 70%)
+                if rez_titlu['label'] in ["ALARMIST", "SENZATIONAL", "CONFLICTUAL"]:
+                    label_final = rez_titlu['label']
+                    scor_final = rez_titlu['score'] * 100
+                else:
+                    label_final = rez_titlu['label']
+                    scor_final = (rez_titlu['score'] * 0.7 + rez_text['score'] * 0.3) * 100
+
+        # --- 8. AFIȘARE VERDICT ---
         st.divider()
-        if label_final == "LABEL_1":
-            st.error("**Verdict Final: ALARMIST 🚩**")
-            st.markdown(f"Nivel de încredere al modelului: **{scor_final:.2f}%**")
+        
+        cat_data = CATEGORIES.get(label_final, {"color": "#333", "icon": "❓", "desc": "Categorie necunoscută"})
+
+        st.markdown(f"""
+            <div style="background-color: {cat_data['color']}; padding: 30px; border-radius: 15px; color: white; text-align: center;">
+                <h1 style="margin: 0; font-size: 32px;">{cat_data['icon']} Verdict: {label_final}</h1>
+                <p style="margin: 10px 0 0 0; font-size: 20px; opacity: 0.9;">{cat_data['desc']}</p>
+            </div>
+        """, unsafe_allow_html=True)
+
+        st.write("")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.write(f"### Scichetă Detectată: **{label_final}**")
+        with col2:
+            st.write(f"### Încredere Model: **{scor_final:.2f}%**")
             st.progress(scor_final / 100)
-            st.caption("Notă: Acest procent reprezintă gradul de certitudine al AI-ului privind stilul senzaționalist, nu veridicitatea faptelor.")
-        else:
-            st.success("**Verdict Final: INFORMATIV ✅**")
-            st.markdown(f"Nivel de încredere al modelului: **{scor_final:.2f}%**")
-            st.progress(scor_final / 100)
+
+        st.caption("🔍 **Notă:** SenticGuard analizează amprenta psihologică și stilul lingvistic. Acest verdict nu reprezintă o confirmare a adevărului absolut, ci a modului în care informația este prezentată.")
+
     else:
-        st.warning("Te rugăm să introduci un conținut valid.")
-# --- 8. SIDEBAR ---
-st.sidebar.title("Despre Proiect")
-st.sidebar.info("Acest detector folosește un model **BERT Romanian** antrenat să facă distincția între jurnalismul factual și cel senzaționalist.")
-st.sidebar.markdown("---")
-st.sidebar.write("📌 **Analiza:** Când introduci un link, sistemul compară titlul cu primele paragrafe pentru a identifica manipularea prin clickbait.")
+        st.warning("Te rugăm să introduci un conținut valid pentru analiză.")
+
+# --- 9. SIDEBAR ---
+st.sidebar.title("Legenda Categoriilor")
+for cat, info in CATEGORIES.items():
+    st.sidebar.markdown(f"**{info['icon']} {cat}**: {info['desc']}")
+
+st.sidebar.divider()
+st.sidebar.button("Șterge tot", on_click=sterge_text)
+st.sidebar.info("SenticGuard v2.0 powered by Multilingual BERT")
