@@ -20,11 +20,9 @@ CATEGORIES = {
 if 'input_text' not in st.session_state:
     st.session_state.input_text = ""
 
-def sterge_text():
-    st.session_state.input_text = ""
-    if 'url_input' in st.session_state:
-        st.session_state.url_input = ""
-    st.rerun()
+def sterge_tot_callback():
+    st.session_state["text_manual_key"] = ""
+    st.session_state["url_input_key"] = ""
 
 # --- 4. MODEL LOAD WITH CACHE ---
 @st.cache_resource
@@ -61,7 +59,10 @@ st.write("Analizează titluri sau articole pentru a identifica intenția și ton
 input_mode = st.radio("Alege metoda de analiză:", ["Titlu / Text manual", "Link Articol (URL)"])
 
 if input_mode == "Link Articol (URL)":
-    url = st.text_input("Introdu URL-ul știrii:")
+    url = st.text_input(
+      "Introdu URL-ul știrii:", 
+      key="url_input_key"
+    )
     if url:
         try:
             article = Article(url)
@@ -74,7 +75,11 @@ if input_mode == "Link Articol (URL)":
             st.error(f"Nu s-a putut procesa URL-ul: {e}")
             titlu_analiza, text_analiza = "", ""
 else:
-    titlu_analiza = st.text_area("Introdu titlul sau textul aici:", value=st.session_state.input_text, height=150)
+    titlu_analiza = st.text_area(
+      "Introdu titlul sau textul aici:", 
+      key="text_manual_key",
+      height=150
+    )
     text_analiza = ""
 
 # --- 7. ANALIZĂ ---
@@ -129,5 +134,5 @@ for cat, info in CATEGORIES.items():
     st.sidebar.markdown(f"**{info['icon']} {cat}**: {info['desc']}")
 
 st.sidebar.divider()
-st.sidebar.button("Șterge tot", on_click=sterge_text)
+st.sidebar.button("Reset", on_click=sterge_tot_callback)
 st.sidebar.info("SenticGuard v2.0 powered by Multilingual BERT")
