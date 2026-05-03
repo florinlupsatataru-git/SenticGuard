@@ -97,13 +97,20 @@ if "temp_df" in st.session_state:
     etichete_validate = []
     for index, row in st.session_state.temp_df.iterrows():
         st.markdown(f"**Titlu:** {row['text']}")
-        col1, col2 = st.columns([0.7, 0.3])
-        with col1:
-            index_default = CATEGORII_LIST.index(row['ai_label']) if row['ai_label'] in CATEGORII_LIST else 0
-            alegere = st.selectbox(f"Categorie {index}:", options=CATEGORII_LIST, index=index_default, key=f"select_{index}", label_visibility="collapsed")
-        with col2:
+
+        col_select, col_score = st.columns([0.3, 0.7]) 
+        with col_select:
+           alegere = st.selectbox(
+              f"Label {index}", 
+              options=CATEGORII_LIST,
+              index=index_default,
+              key=f"select_{index}",
+              label_visibility="collapsed"
+           )
+        with col_score:
             conf_color = "🟢" if row['ai_score'] > 0.8 else "🟡" if row['ai_score'] > 0.6 else "🔴"
-            st.write(f"AI: **{row['ai_label']}** ({conf_color} {row['ai_score']:.1%})")
+            st.write(f"{conf_color} **AI:** {row['ai_label']} ({row['ai_score']:.1%})")
+
         etichete_validate.append(CATEGORIES_MAP[alegere])
         st.divider()
 
