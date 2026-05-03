@@ -1,32 +1,48 @@
 # SenticGuard: AI-Powered Emotional Integrity & Media Resilience Framework  
-### SenticGuard is an intelligent system designed to identify emotional manipulation mechanisms and sensationalism in Romanian news feeds, using BERT NLP technology.  
+### SenticGuard is an advanced intelligent system designed to identify emotional manipulation, sensationalism, and disinformation patterns in Romanian news feeds using NLP technology.  
 
-**The Problem: Fear Manipulation**  
-Clickbait headlines and alarmist news are not just media noise; they are built on psychological triggers (e.g. fear, false urgency) that increase social anxiety and distort reality.  
+**The Problem: Psychological Manipulation**  
+Modern media often bypasses rational filters by using psychological triggers—fear, false urgency, or conflict—to drive engagement. This project aims to map these nuances to reduce social anxiety and improve digital media literacy.
 
-**The Solution: Active Learning with Psychological Supervision**  
-The system uses a learning cycle in which the AI ​​proposes and the specialist validates, constantly refining the detection criteria.
+**The Solution: Human-in-the-Loop Active Learning**  
+Unlike static filters, SenticGuard employs a continuous improvement cycle. The AI proposes classifications, and a specialist validates them, creating a dataset that constantly refines the model's accuracy.
 
-**Workflow: Active Learning & Deployment**  
-The system works through a continuous improvement cycle between the administration and public applications:
+**Multidimensional Classification (6 Categories)**  
+The system has evolved from simple binary detection to a nuanced 6-category mapping:
 
-* Collection & Pre-analysis (Admin App): Headlines are retrieved via RSS. The AI ​​model proposes a label (Informative/Alarmist) and a trust score.
+OBJECTIVE: Factual, neutral reporting.
 
-* Human-in-the-Loop: The administrator confirms or corrects the AI's ticks. The data is saved in Google Sheets.
+ALARMIST: Headlines inducing panic or exaggerated fear.
 
-* Training (Google Colab): The model is periodically re-trained on new validated data to refine its accuracy.
+SENZATIONAL: Clickbait designed to exploit curiosity.
 
-* Update (Public App): The verification application automatically uses the newest model saved in Google Drive, providing increasingly accurate results. Demo (romanian) [here](https://senticguard-app.streamlit.app/)
+CONFLICTUAL: Focus on scandals, accusations, and disputes.
+
+INFORMATIVE: Utilitarian content (weather, public service announcements).
+
+OPINION: Subjective editorials and personal analyses.
+
+**Workflow & Infrastructure**  
+
+* Collection & Filtering (Admin App): Headlines are retrieved via RSS feeds. The system allows for selective labeling to maintain a high-quality, balanced dataset.
+
+* Validation: Real-time AI confidence scores (BERT-based) assist the admin in confirming or correcting labels.
+
+* Storage: Data is synchronized via Google Sheets API, serving as a dynamic, version-controlled dataset.
+
+* Training: Fine-tuning is performed on BERT/RoBERTa architectures using specialized GPU environments to handle Romanian linguistic nuances.
+
+* Deployment: The public-facing app automatically utilizes the latest model weights, providing real-time manipulation analysis for the end user. Demo (romanian) [here](https://senticguard-app.streamlit.app/)
 
 **Technology Stack**
 
-* AI: transformers (BERT Multilingual), PyTorch.
+* AI/NLP: transformers (BERT/RoBERTa), PyTorch, pipeline API.
 
-* Interface: Streamlit Cloud (Admin & Public Verifier).
+* Frontend: Streamlit (Admin & Public Verifier).
 
-* Storage: Google Sheets API (Dataset) & Google Drive (Model Storage).
+* Data Pipeline: GSheetsConnection for seamless dataset management.
 
-* Infrastructure: Google Colab for GPU training.
+* Automation: gdown for automated model weight synchronization from Google Drive.
 
 **Vision**  
-From the current binary detection (Informative vs. Alarmist), the project evolves towards the nuanced mapping of types of psychological manipulation (e.g. fear, demonization, false urgency, appeal to authority).
+While currently optimized for the Romanian media landscape, the architecture is being refined to support multilingual analysis (English/XLM-RoBERTa), aiming to provide a cross-border shield against global disinformation patterns.
