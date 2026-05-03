@@ -6,7 +6,7 @@ from newspaper import Article
 # --- 1. PAGE CONFIG ---
 st.set_page_config(page_title="SenticGuard AI: Ethical Integrity Check", page_icon="🔍", layout="wide")
 
-# --- 2. CONFIGURAȚIE CATEGORII (Mapping & UI) ---
+# --- 2. CATEGORIES CONFIG (Mapping & UI) ---
 CATEGORIES = {
     "OBIECTIV": {"color": "#28a745", "icon": "✅", "desc": "Știre neutră, bazată pe fapte și date verificabile."},
     "ALARMIST": {"color": "#dc3545", "icon": "🚩", "desc": "Conținut care încearcă să inducă teamă sau panică nejustificată."},
@@ -16,13 +16,13 @@ CATEGORIES = {
     "OPINIE": {"color": "#6c757d", "icon": "✍️", "desc": "Perspectivă subiectivă, editorial sau analiză personală."}
 }
 
-# --- 3. SESSION STATE ---
-if 'input_text' not in st.session_state:
-    st.session_state.input_text = ""
-
+# --- 3. RESET CALLBACK ---
 def sterge_tot_callback():
-    st.session_state["text_manual_key"] = ""
-    st.session_state["url_input_key"] = ""
+    # Directly clean the values ​​from session_state using widget keys
+    if "text_manual_key" in st.session_state:
+        st.session_state["text_manual_key"] = ""
+    if "url_input_key" in st.session_state:
+        st.session_state["url_input_key"] = ""
 
 # --- 4. MODEL LOAD WITH CACHE ---
 @st.cache_resource
@@ -42,7 +42,6 @@ if "predict_text" in query_params:
     text_to_analyze = query_params["predict_text"]
     if cls_pipeline:
         prediction = cls_pipeline(text_to_analyze[:512])[0]
-        # Trimitem JSON-ul înapoi către extensie
         st.json({
             "label": prediction['label'],
             "score": float(prediction['score']),
@@ -50,7 +49,7 @@ if "predict_text" in query_params:
         })
         st.stop()
 
-# --- UI PRINCIPALĂ ---
+# --- MAIN UI ---
 st.title("🛡️ SenticGuard AI")
 st.markdown("### Detector de Integritate și Stil Jurnalistic v2.0")
 st.write("Analizează titluri sau articole pentru a identifica intenția și tonul comunicării.")
@@ -58,11 +57,11 @@ st.write("Analizează titluri sau articole pentru a identifica intenția și ton
 # --- 6. INPUT SECTION ---
 input_mode = st.radio("Alege metoda de analiză:", ["Titlu / Text manual", "Link Articol (URL)"])
 
+titlu_analiza = ""
+text_analiza = ""
+
 if input_mode == "Link Articol (URL)":
-    url = st.text_input(
-      "Introdu URL-ul știrii:", 
-      key="url_input_key"
-    )
+    url = st.text_input("Introdu URL-ul știrii:", key="url_input_key")
     if url:
         try:
             article = Article(url)
@@ -73,29 +72,29 @@ if input_mode == "Link Articol (URL)":
             st.info(f"**Titlu detectat:** {titlu_analiza}")
         except Exception as e:
             st.error(f"Nu s-a putut procesa URL-ul: {e}")
-            titlu_analiza, text_analiza = "", ""
 else:
-    titlu_analiza = st.text_area(
-      "Introdu titlul sau textul aici:", 
-      key="text_manual_key",
-      height=150
-    )
-    text_analiza = ""
+    titlu_analiza = st.text_area("Introdu titlul sau textul aici:", height=150, key="text_manual_key")
 
-# --- 7. ANALIZĂ ---
-if st.button("Analizează Conținutul"):
+# --- 7. ACTION BUTTONS ---
+st.write("")
+col_btn1, col_btn2 = st.columns([1, 1])
+
+with col_btn1:
+    analizeaza_click = st.button("🚀 Analizează Conținutul", use_container_width=True, type="primary")
+
+with col_btn2:
+    st.button("🗑️ Reset", use_container_width=True, on_click=sterge_tot_callback)
+
+# --- 8. ANALYSIS LOGIC ---
+if analizeaza_click:
     if titlu_analiza and cls_pipeline:
-        with st.spinner('SenticGuard analizează textul...'):
-            # Analiză Titlu
+        with st.spinner('Senticguard analizează textul...'):
             rez_titlu = cls_pipeline(titlu_analiza[:512])[0]
             label_final = rez_titlu['label']
             scor_final = rez_titlu['score'] * 100
 
-            # Dacă avem și text lung din URL, îl analizăm și pe acela
             if text_analiza:
                 rez_text = cls_pipeline(text_analiza[:512])[0]
-                # Prioritizăm titlul dacă acesta este marcat ca alarmist/senzațional, 
-                # altfel facem o pondere (titlul contează 70%)
                 if rez_titlu['label'] in ["ALARMIST", "SENZATIONAL", "CONFLICTUAL"]:
                     label_final = rez_titlu['label']
                     scor_final = rez_titlu['score'] * 100
@@ -103,9 +102,8 @@ if st.button("Analizează Conținutul"):
                     label_final = rez_titlu['label']
                     scor_final = (rez_titlu['score'] * 0.7 + rez_text['score'] * 0.3) * 100
 
-        # --- 8. AFIȘARE VERDICT ---
+        # --- 9. VERDICT DISPLAY ---
         st.divider()
-        
         cat_data = CATEGORIES.get(label_final, {"color": "#333", "icon": "❓", "desc": "Categorie necunoscută"})
 
         st.markdown(f"""
@@ -116,23 +114,20 @@ if st.button("Analizează Conținutul"):
         """, unsafe_allow_html=True)
 
         st.write("")
-        col1, col2 = st.columns(2)
-        with col1:
-            st.write(f"### Scichetă Detectată: **{label_final}**")
-        with col2:
-            st.write(f"### Încredere Model: **{scor_final:.2f}%**")
+        col_res1, col_res2 = st.columns(2)
+        with col_res1:
+            st.write(f"### Etichetă: **{label_final}**")
+        with col_res2:
+            st.write(f"### Încredere: **{scor_final:.2f}%**")
             st.progress(scor_final / 100)
-
-        st.caption("🔍 **Notă:** SenticGuard analizează amprenta psihologică și stilul lingvistic. Acest verdict nu reprezintă o confirmare a adevărului absolut, ci a modului în care informația este prezentată.")
 
     else:
         st.warning("Te rugăm să introduci un conținut valid pentru analiză.")
 
-# --- 9. SIDEBAR ---
+# --- 10. SIDEBAR LEGEND ---
 st.sidebar.title("Legenda Categoriilor")
 for cat, info in CATEGORIES.items():
     st.sidebar.markdown(f"**{info['icon']} {cat}**: {info['desc']}")
 
 st.sidebar.divider()
-st.sidebar.button("Reset", on_click=sterge_tot_callback)
 st.sidebar.info("SenticGuard v2.0 powered by Multilingual BERT")
