@@ -134,7 +134,20 @@ if "temp_df" in st.session_state:
         except Exception as e:
             st.error(f"Eroare la salvare: {e}")
 
+# --- SIDEBAR: CATEGORIES LEGEND ---
+st.sidebar.title("📖 Legenda Categoriilor")
+with st.sidebar.expander("Vezi descrierea etichetelor"):
+    st.markdown("""
+    - **OBIECTIV (0)**: Știri neutre, bazate pe fapte verificate, fără nuanțe emoționale.
+    - **ALARMIST (1)**: Titluri care induc panică, teamă sau folosesc avertismente exagerate.
+    - **SENZAȚIONAL (2)**: Clickbait pur, mizează pe curiozitate sau șoc (ex: "Nu o să crezi").
+    - **CONFLICTUAL (3)**: Scandaluri, certuri, acuzații directe sau dispute între persoane/grupuri.
+    - **INFORMATIV (4)**: Conținut utilitar, ghiduri, prognoze meteo concrete sau anunțuri de interes public.
+    - **OPINIE (5)**: Editoriale, comentarii subiective sau analize semnate de autori.
+    """)
+
 # --- SIDEBAR: MANUAL ADD ---
+st.sidebar.divider()
 st.sidebar.title("➕ Adăugare Manuală")
 
 # Use a form with clear_on_submit to avoid session_state errors
