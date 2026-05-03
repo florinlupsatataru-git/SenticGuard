@@ -104,13 +104,13 @@ if "temp_df" in st.session_state:
         
         with col_select:
             index_default = CATEGORII_LIST.index(row['ai_label']) if row['ai_label'] in CATEGORII_LIST else 0
-            
+
             alegere = st.selectbox(
-                f"Label {index}", 
-                options=CATEGORII_LIST,
-                index=index_default, # Acum variabila este definită exact înainte
-                key=f"select_{index}",
-                label_visibility="collapsed"
+                   f"Label {index}", 
+                   options=CATEGORII_LIST,
+                   index=index_default,
+                   key=f"{sursa}_select_{index}", 
+                   label_visibility="collapsed"
             )
             
         with col_score:
