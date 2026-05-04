@@ -38,13 +38,12 @@ if not st.session_state["authenticated"]:
 
 # --- 2.5 LOAD DATASET GLOBALLY ---
 def load_global_data():
-    """Reads the dataset from Google Sheets and stores it in session state."""
     try:
+        # ttl=0 forcing read new data, no cache
         conn = st.connection("gsheets", type=GSheetsConnection)
-        st.session_state.df = conn.read()
+        st.session_state.df = conn.read(ttl=0) 
     except Exception as e:
-        st.error(f"Error connecting to Google Sheets: {e}")
-        st.session_state.df = pd.DataFrame(columns=["text", "label"])
+        st.error(f"Error: {e}")
 
 # Load data immediately after authentication
 if "df" not in st.session_state:
@@ -176,6 +175,10 @@ if "df" in st.session_state and st.session_state.df is not None:
     for k, v in real_counts.items():
         if k in counts:
             counts[int(k)] = v
+
+if st.sidebar.button("🔄 Refresh Data"):
+    load_global_data()
+    st.rerun()
 
 st.sidebar.title("📖 Legenda Categoriilor")
 
