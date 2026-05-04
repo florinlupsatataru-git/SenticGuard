@@ -1,24 +1,20 @@
 import streamlit as st
 from transformers import pipeline
-from newspaper import Article
+from newspaper import Article, Config
 
 # --- 1. PAGE CONFIG ---
 st.set_page_config(
     page_title="SenticGuard AI", 
     page_icon="🛡️", 
     layout="wide",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="expanded" # Am schimbat aici să fie vizibil
 )
 
 # --- 2. MINIMAL DESIGN (CSS) ---
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
-    
-    html, body, [class*="css"] {
-        font-family: 'Inter', sans-serif;
-    }
-    
+    html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
     .main-card {
         background-color: #ffffff;
         padding: 25px;
@@ -27,7 +23,6 @@ st.markdown("""
         box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
         margin-bottom: 20px;
     }
-
     .verdict-badge {
         display: inline-block;
         padding: 4px 12px;
@@ -67,7 +62,8 @@ cls_pipeline = load_model()
 def analyze_text(text):
     if not text or not cls_pipeline:
         return None
-    prediction = cls_pipeline(text[:512])[0]
+    # Curățăm textul de spații inutile înainte de analiză
+    prediction = cls_pipeline(text.strip()[:512])[0]
     return {
         "label": prediction['label'],
         "score": float(prediction['score']),
@@ -86,23 +82,32 @@ with st.container():
     text_analiza = ""
 
     with input_mode[0]:
-        url = st.text_input("URL Articol:", placeholder="Puneti un link aici...", key="url_input")
+        url = st.text_input("URL Articol:", placeholder="Paste link here...", key="url_input")
         if url:
             try:
-                article = Article(url)
+                config = Config()
+                config.browser_user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'
+                
+                article = Article(url, config=config)
                 article.download()
                 article.parse()
+                
                 titlu_analiza = article.title
                 text_analiza = article.text
-                st.success(f"Articol detectat: {titlu_analiza}")
+                
+                if titlu_analiza:
+                    st.success(f"Articol detectat: {titlu_analiza}")
+                else:
+                    st.warning("Nu am putut extrage titlul. Introdu-l manual la tab-ul 'Text Manual'.")
             except Exception as e:
-                st.error(f"Eroare: {e}")
+                st.error(f"Eroare la accesarea site-ului: {e}")
 
     with input_mode[1]:
-        titlu_analiza = st.text_area("Titlu / Paragraf:", height=100)
+        titlu_analiza = st.text_area("Titlu / Paragraf:", height=100, key="manual_text")
     
     c1, c2 = st.columns([1, 5])
     with c1:
+        # Folosim un buton simplu pentru a declanșa analiza
         start_analysis = st.button("Analizează", type="primary", use_container_width=True)
     with c2:
         if st.button("Reset", type="secondary"):
@@ -110,7 +115,7 @@ with st.container():
     st.markdown('</div>', unsafe_allow_html=True)
 
 # --- 6. RESULTS ---
-if start_analysis and titlu_analiza:
+if (start_analysis or titlu_analiza) and titlu_analiza:
     res_titlu = analyze_text(titlu_analiza)
     
     if res_titlu:
@@ -138,3 +143,15 @@ if start_analysis and titlu_analiza:
             
             if res_titlu['label'] != res_content['label']:
                 st.warning(f"S-a detectat o diferență de ton între titlu ({res_titlu['label']}) și conținut ({res_content['label']}).")
+
+# --- 7. SIDEBAR ---
+with st.sidebar:
+    st.title("SenticGuard v12")
+    st.markdown("---")
+    for cat, info in CATEGORIES.items():
+        st.markdown(f"""
+        <div style="margin-bottom: 15px;">
+            <span style="color:{info['color']}; font-weight:bold;">{cat}</span><br>
+            <small style="color:#64748b;">{info['desc']}</small>
+        </div>
+        """, unsafe_allow_html=True)
