@@ -22,10 +22,22 @@ st.set_page_config(
 
 # --- 1.1 GEMINI AI INITIALIZATION ---
 def initialize_gemini():
-    """Initializes Google Gemini API using the key stored in secrets.toml."""
+    """
+    Initializes Google Gemini API checking multiple configurations, 
+    including the exact [gemini_api] block from your secrets.toml.
+    """
     try:
-        if "gemini" in st.secrets and "api_key" in st.secrets["gemini"]:
+        # 1. Matches exactly your secrets.toml structure: [gemini_api] -> api_key
+        if "gemini_api" in st.secrets and "api_key" in st.secrets["gemini_api"]:
+            genai.configure(api_key=st.secrets["gemini_api"]["api_key"])
+            return genai.GenerativeModel('gemini-1.5-flash')
+        # 2. Fallback to standard [gemini] layout
+        elif "gemini" in st.secrets and "api_key" in st.secrets["gemini"]:
             genai.configure(api_key=st.secrets["gemini"]["api_key"])
+            return genai.GenerativeModel('gemini-1.5-flash')
+        # 3. Fallback to flat environment variable layout
+        elif "GEMINI_API_KEY" in st.secrets:
+            genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
             return genai.GenerativeModel('gemini-1.5-flash')
     except Exception as e:
         pass
@@ -240,19 +252,17 @@ if st.button(T["analyze_btn"], type="primary"):
                 final_id = id_title
                 final_score = score_title
 
-            # --- ULTRA-SAFE FALLBACK FOR THE RANDOM TEMPLATES ---
-            # Try to fetch from translations file regardless of 'template' or 'templates' spelling
+            # Dynamic localized label lookup from translations mapping
+            localized_verdict = T.get(f"label_{final_id}", VERDICT_INFO[final_id]["label"])
+
+            # Tolerant dictionary template reading
             trans_templates = T.get("template") or T.get("templates") or {}
-            
-            # Decide if it's a match or mismatch branch
             is_match = not res_content or id_title == label_map[res_content['label']]
             branch_key = "match" if is_match else "mismatch"
             
-            # Pick the list from file, or fall back to a hardcoded baseline list if dict is empty
             if trans_templates and branch_key in trans_templates:
                 static_list = trans_templates[branch_key]
             else:
-                # Absolute hardcoded safe fallback text in case dictionary parsing acts up
                 if st.session_state["lang"] == "RO":
                     static_list = ["Analiza sistemului indică un stil preponderent {label_v}."]
                 else:
@@ -260,12 +270,12 @@ if st.button(T["analyze_btn"], type="primary"):
 
             fallback_explanation = random.choice(static_list).format(
                 label_s=label_title_str, 
-                label_v=VERDICT_INFO[final_id]["label"]
+                label_v=localized_verdict
             )
 
             verdict_final = {
                 "id": final_id,
-                "label": VERDICT_INFO[final_id]["label"],
+                "label": localized_verdict,
                 "class": VERDICT_INFO[final_id]["class"],
                 "score": final_score,
                 "explanation": fallback_explanation
@@ -283,14 +293,15 @@ if st.button(T["analyze_btn"], type="primary"):
             if dynamic_exp:
                 verdict_final["explanation"] = dynamic_exp
 
-        log_security_event("VERIFY", 1, f"Analyzed item from {source_domain}. Result: {verdict_final['label']}")
-        log_analysis_to_gsheets(titlu_analiza, source_domain, verdict_final['label'], verdict_final['score'])
+        log_security_event("VERIFY", 1, f"Analyzed item from {source_domain}. Result: {VERDICT_INFO[final_id]['label']}")
+        log_analysis_to_gsheets(titlu_analiza, source_domain, VERDICT_INFO[final_id]['label'], verdict_final['score'])
 
         # --- 10. RESULTS RENDERING (HTML TEMPLATE) ---
+        verdict_prefix_text = T.get('verdict_prefix', 'VERDICT:')
         st.markdown(f"""
             <div class="card-result {verdict_final['class']}">
                 <div class="badge-verdict badge-{verdict_final['class'].split('-')[1]}">
-                    VERDICT: {verdict_final['label']}
+                    {verdict_prefix_text} {verdict_final['label']}
                 </div>
                 <h3 class=\"article-title\">{titlu_analiza}</h3>
                 <p style="font-size: 1.1rem; color: #334155; font-weight: 500; line-height: 1.5; margin-bottom: 0;">
@@ -308,13 +319,13 @@ if st.button(T["analyze_btn"], type="primary"):
             
             with col_r2: 
                 if res_content:
-                    st.metric(T["deep_analysis"], res_content['label'])
+                    st.metric(T["tech_content_label"], res_content['label'])
                     st.progress(res_content['score'], text=f"{T['confidence']} {res_content['score']:.2%}")
                 else:
-                    st.info("Corp de text indisponibil pentru analiză extinsă.")
+                    st.info(T["tech_no_content"])
             
             st.divider()
-            st.write(f"**SCOR FINAL CONFIDENȚĂ:** {verdict_final['score']:.2%}")
+            st.write(f"**{T['tech_final_label']}** {verdict_final['score']:.2%}")
 
 # --- 11. SIDEBAR LEGEND ---
 with st.sidebar:
