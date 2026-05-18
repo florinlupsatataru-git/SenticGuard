@@ -20,25 +20,22 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- 1.1 GEMINI NATIVE HTTP API RESOLVER ---
+# --- 1.1 GEMINI NATIVE HTTP API RESOLVER (FĂRĂ ARANJAMENTE SUB PREȘ) ---
 def generate_dynamic_explanation(title, content, verdict_label, lang):
     """
-    Generates a dynamic 2-sentence explanation making a direct HTTP POST request 
-    to Google's production v1beta stable endpoint.
-    Fails gracefully back to static templates without flooding the UI with errors.
+    Generates a dynamic 2-sentence explanation using a rock-solid HTTP request.
+    NO MORE SILENT CATCHES. If it fails, it prints the real raw network logs.
     """
-    api_key = None
-    try:
-        if "gemini_api" in st.secrets and "api_key" in st.secrets["gemini_api"]:
-            api_key = st.secrets["gemini_api"]["api_key"]
-        elif "gemini" in st.secrets and "api_key" in st.secrets["gemini"]:
-            api_key = st.secrets["gemini"]["api_key"]
-        elif "GEMINI_API_KEY" in st.secrets:
-            api_key = st.secrets["GEMINI_API_KEY"]
-    except Exception:
-        return None
+    # Safe secret fetching
+    if "gemini_api" in st.secrets and "api_key" in st.secrets["gemini_api"]:
+        api_key = st.secrets["gemini_api"]["api_key"]
+    elif "gemini" in st.secrets and "api_key" in st.secrets["gemini"]:
+        api_key = st.secrets["gemini"]["api_key"]
+    else:
+        api_key = st.secrets.get("GEMINI_API_KEY")
 
     if not api_key:
+        st.error("❌ Eroare critică: Cheia API Gemini lipsește complet din secrets.toml!")
         return None
 
     context_text = f"Titlu: {title}"
@@ -60,8 +57,11 @@ def generate_dynamic_explanation(title, content, verdict_label, lang):
             f"Do not use conversational intros like 'This article...', go straight to the discourse analysis."
         )
 
-    # Standard clean URL payload format accepted by Google AI Studio
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+    # Clean, verified production URL
+    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
+    
+    # We pass the key as a clean query parameter dictionary, preventing parsing breaks
+    params = {"key": api_key}
     headers = {"Content-Type": "application/json"}
     payload = {
         "contents": [{
@@ -69,18 +69,19 @@ def generate_dynamic_explanation(title, content, verdict_label, lang):
         }]
     }
 
-    try:
-        response = requests.post(url, headers=headers, json=payload, timeout=8)
-        if response.status_code == 200:
-            res_json = response.json()
-            return res_json['candidates'][0]['content']['parts'][0]['text'].strip()
-    except Exception:
-        pass
-    return None
+    # No try-except here. Let it scream if it fails!
+    response = requests.post(url, headers=headers, json=payload, params=params, timeout=10)
+    
+    if response.status_code == 200:
+        res_json = response.json()
+        return res_json['candidates'][0]['content']['parts'][0]['text'].strip()
+    else:
+        # This will render EXACTLY in the middle of the screen if Google rejects us
+        st.error(f"💥 Google API Server Refusal! Status: {response.status_code} - Response Text: {response.text}")
+        return None
 
 # --- 2. DATABASE LOGGING (PostgreSQL) ---
 def get_db_connection():
-    """Establishes connection to the PostgreSQL database using Streamlit secrets."""
     return psycopg2.connect(
         host=st.secrets["postgres"]["host"],
         database=st.secrets["postgres"]["database"],
@@ -90,7 +91,6 @@ def get_db_connection():
     )
 
 def log_security_event(event_type="VISIT_8501", severity=1, description="Direct access to Streamlit interface"):
-    """Logs access and security events directly to PostgreSQL."""
     try:
         headers = st.context.headers
         ip_addr = "Unknown"
@@ -108,15 +108,13 @@ def log_security_event(event_type="VISIT_8501", severity=1, description="Direct 
         conn.commit()
         cur.close()
         conn.close()
-    except Exception as e:
+    except Exception:
         pass
 
 def log_analysis_to_gsheets(url_or_text, source_domain, verdict, confidence):
-    """Logs verification metadata directly into Google Sheets for analytics."""
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
         df_existing = conn.read(worksheet="Logs", ttl=0)
-        
         new_row = pd.DataFrame([{
             "timestamp": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S"),
             "input_data": url_or_text[:255],
@@ -124,10 +122,9 @@ def log_analysis_to_gsheets(url_or_text, source_domain, verdict, confidence):
             "verdict": verdict,
             "confidence": float(confidence)
         }])
-        
         df_updated = pd.concat([df_existing, new_row], ignore_index=True)
         conn.update(worksheet="Logs", data=df_updated)
-    except Exception as e:
+    except Exception:
         pass
 
 # --- 3. LANGUAGE AND SESSION INITIALIZATION ---
@@ -149,7 +146,6 @@ T = TRANSLATIONS[st.session_state["lang"]]
 # --- 5. MODEL CACHING ---
 @st.cache_resource
 def load_classifier():
-    """Initializes and caches the local Transformer pipeline."""
     return pipeline("text-classification", model="./model_temp", tokenizer="./model_temp")
 
 classifier = load_classifier()
