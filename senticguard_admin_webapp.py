@@ -83,6 +83,18 @@ def load_security_logs():
         st.error(f"Database Error: {e}")
         return pd.DataFrame()
 
+def load_pending_queue():
+    """Fetch all unvalidated articles aggregated by the background crawler"""
+    try:
+        conn = get_db_connection()
+        query = "SELECT id, title, content, predicted_label, confidence_score FROM pending_queue ORDER BY fetched_at ASC"
+        df = pd.read_sql(query, conn)
+        conn.close()
+        return df
+    except Exception as e:
+        st.error(f"Error loading automated queue: {e}")
+        return pd.DataFrame()
+
 # Initial data load
 if "df" not in st.session_state:
     load_global_data()
@@ -115,9 +127,10 @@ def load_classifier():
 
 # --- 5. MAIN NAVIGATION (TABS) ---
 st.title("🛡️ SenticGuard Master Control")
-tab_stats, tab_training, tab_security = st.tabs([
+tab_stats, tab_training, tab_auto_validation, tab_security = st.tabs([
     "📈 Statistici Live", 
     "📊 Colectare & Training", 
+    "🤖 Validare Automatizată",
     "🛡️ Monitorizare Securitate"
 ])
 
@@ -166,7 +179,7 @@ with tab_stats:
         st.info("Încă nu există date în foaia de Logs.")
 
 # ==========================================
-# TAB 2: COLLECTION & TRAINING
+# TAB 2: COLLECTION & TRAINING (MANUAL)
 # ==========================================
 with tab_training:
     st.header("Colectare & Validare Date")
@@ -224,7 +237,87 @@ with tab_training:
                     st.error(f"Eroare: {e}")
 
 # ==========================================
-# TAB 3: SECURITY LOGS (FROM POSTGRESQL)
+# TAB 3: AUTOMATED VALIDATION (SMART QUEUE)
+# ==========================================
+with tab_auto_validation:
+    st.header("🤖 Validare Coadă Automatizată")
+    st.write("Aici se află articolele colectate automat în fundal de către crawler-ul de știri.")
+
+    if st.button("🔄 Refresh Queue", key="refresh_queue"):
+        st.rerun()
+
+    df_queue = load_pending_queue()
+
+    if df_queue.empty:
+        st.success("Coada este goală! Nu există articole noi de validat.")
+    else:
+        st.info(f"Există **{len(df_queue)}** articole care așteaptă decizia ta.")
+        
+        # Lists to keep tracking of records to update/delete on final submission
+        final_validation_list = []
+        ids_to_delete = []
+
+        for index, row in df_queue.iterrows():
+            st.markdown(f"**{index+1}.** {row['title']}")
+            
+            col_select, col_score = st.columns([0.4, 0.6])
+            with col_select:
+                # Pre-select the dropdown option based on the crawler's initial AI prediction
+                idx_def = (list(CATEGORIES_MAP.keys()).index(row['predicted_label']) + 1) if row['predicted_label'] in CATEGORIES_MAP else 0
+                alegere = st.selectbox(
+                    f"Verdict final pentru articolul #{row['id']}", 
+                    options=CATEGORII_LIST, 
+                    index=idx_def, 
+                    key=f"auto_sel_{row['id']}"
+                )
+            with col_score:
+                st.write(f"**AI Prediction:** {row['predicted_label']} ({row['confidence_score']:.1%})")
+            
+            # Map choice to final destination tracking
+            if alegere != "NU ETICHETA":
+                final_validation_list.append({"text": row['title'], "label": CATEGORIES_MAP[alegere], "db_id": row['id']})
+            else:
+                # If marked as "NU ETICHETA", it means the user wants to discard/delete it completely
+                ids_to_delete.append(row['id'])
+                
+            st.divider()
+
+        # Submit workflow process
+        if st.button("Procesează coada de articole", type="primary", key="btn_submit_queue"):
+            try:
+                # 1. Save validated entries to Google Sheets if any exist
+                if final_validation_list:
+                    conn_gsheets = st.connection("gsheets", type=GSheetsConnection)
+                    existing_df = conn_gsheets.read()
+                    
+                    # Remove the internal tracking 'db_id' before saving to sheets
+                    clean_entries = [{"text": x["text"], "label": x["label"]} for x in final_validation_list]
+                    
+                    updated_df = pd.concat([existing_df, pd.DataFrame(clean_entries)], ignore_index=True)
+                    conn_gsheets.update(data=updated_df)
+                    
+                    # Add database IDs of validated items to the master deletion list
+                    for item in final_validation_list:
+                        ids_to_delete.append(item["db_id"])
+
+                # 2. Delete processed/discarded items from local PostgreSQL pending_queue
+                if ids_to_delete:
+                    conn_pg = get_db_connection()
+                    cur = conn_pg.cursor()
+                    # Execute bulk deletion query
+                    cur.execute("DELETE FROM pending_queue WHERE id = ANY(%s);", (ids_to_delete,))
+                    conn_pg.commit()
+                    cur.close()
+                    conn_pg.close()
+
+                st.success("Coada a fost procesată cu succes! Datele au fost mutate în Google Sheets.")
+                st.rerun()
+
+            except Exception as e:
+                st.error(f"Eroare la procesarea cozii de date: {e}")
+
+# ==========================================
+# TAB 4: SECURITY LOGS (FROM POSTGRESQL)
 # ==========================================
 with tab_security:
     st.header("🛡️ Monitorizare Securitate și Acces")
