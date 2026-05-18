@@ -23,10 +23,9 @@ st.set_page_config(
 # --- 1.1 GEMINI ULTIMATE HTTP API RESOLVER ---
 def generate_dynamic_explanation(title, content, verdict_label, lang):
     """
-    Generates a dynamic 2-sentence explanation using Google's production v1 stable API endpoint.
-    Completely eliminates 404 router faults by bypassing v1beta layout structures.
+    Generates a dynamic 2-sentence explanation using Google's core stable v1 gemini-pro endpoint.
+    This bypasses any 404 resource constraints associated with flash deployments.
     """
-    # 1. Retrieve the API Key safely from your secrets.toml structure
     api_key = None
     try:
         if "gemini_api" in st.secrets and "api_key" in st.secrets["gemini_api"]:
@@ -41,7 +40,6 @@ def generate_dynamic_explanation(title, content, verdict_label, lang):
     if not api_key:
         return None
 
-    # 2. Build the precise sociological prompt
     context_text = f"Titlu: {title}"
     if content and content.strip():
         context_text += f"\nContinut: {content[:1000]}"
@@ -61,8 +59,8 @@ def generate_dynamic_explanation(title, content, verdict_label, lang):
             f"Do not use conversational intros like 'This article...', go straight to the discourse analysis."
         )
 
-    # 3. HTTP Request targeted to the standard STABLE V1 endpoint
-    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={api_key}"
+    # Calling the universal stable v1 gemini-pro route
+    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key={api_key}"
     headers = {"Content-Type": "application/json"}
     payload = {
         "contents": [{
@@ -76,14 +74,7 @@ def generate_dynamic_explanation(title, content, verdict_label, lang):
             res_json = response.json()
             return res_json['candidates'][0]['content']['parts'][0]['text'].strip()
         else:
-            # Absolute fallback checkpoint using the legacy layout if the v1 router complains
-            fallback_url = f"https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key={api_key}"
-            fb_response = requests.post(fallback_url, headers=headers, json=payload, timeout=10)
-            if fb_response.status_code == 200:
-                fb_json = fb_response.json()
-                return fb_json['candidates'][0]['content']['parts'][0]['text'].strip()
-            
-            st.sidebar.error(f"API HTTP Error: {response.status_code} - {response.text}")
+            st.sidebar.error(f"API HTTP Error: {response.status_code}")
     except Exception as e:
         st.sidebar.error(f"HTTP Execution Error: {e}")
     return None
