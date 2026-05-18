@@ -256,8 +256,8 @@ if st.button(T["analyze_btn"], type="primary"):
                 final_score = score_title
 
             # Package result style properties
-            # Uses randomized static templates from your translation file as fallback
-            static_templates = T["templates"]["match"] if not res_content or id_title == label_map[res_content['label']] else T["templates"]["mismatch"]
+            # Fixed here: Changed T["templates"] to T["template"] to match translations structure
+            static_templates = T["template"]["match"] if not res_content or id_title == label_map[res_content['label']] else T["template"]["mismatch"]
             fallback_explanation = random.choice(static_templates).format(
                 label_s=label_title_str, 
                 label_v=VERDICT_INFO[final_id]["label"]
