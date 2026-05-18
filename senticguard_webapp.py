@@ -23,8 +23,8 @@ st.set_page_config(
 # --- 1.1 GEMINI DYNAMIC DISCOVERY & EXTRACTION RESOLVER ---
 def generate_dynamic_explanation(title, content, verdict_label, lang):
     """
-    Dynamically discovers and uses the active Google AI Studio models.
-    Fails gracefully back to local templates without flooding the UI with errors during spikes.
+    Dynamically discovers active models and cycles through 4 distinct 
+    execution pathways (Cascading Fallback) to aggressively combat 503/429 errors.
     """
     if "gemini_api" in st.secrets and "api_key" in st.secrets["gemini_api"]:
         api_key = st.secrets["gemini_api"]["api_key"]
@@ -36,7 +36,7 @@ def generate_dynamic_explanation(title, content, verdict_label, lang):
     if not api_key:
         return None
 
-    # Step 1: Query Google's live catalog
+    # Step 1: Live Catalog Discovery
     list_url = "https://generativelanguage.googleapis.com/v1beta/models"
     params = {"key": api_key}
     
@@ -51,13 +51,11 @@ def generate_dynamic_explanation(title, content, verdict_label, lang):
     except Exception:
         pass
 
-    # Set up our battle order based on discovery
-    if len(discovered_models) >= 1:
-        primary_model = discovered_models[0]
-        secondary_model = discovered_models[1] if len(discovered_models) > 1 else "models/gemini-1.5-flash"
-    else:
-        primary_model = "models/gemini-1.5-flash"
-        secondary_model = "models/gemini-pro"
+    # Step 2: Establish the 4-Tier Cascade Battle Order
+    tier1 = discovered_models[0] if len(discovered_models) >= 1 else "models/gemini-1.5-flash"
+    tier2 = discovered_models[1] if len(discovered_models) > 1 else "models/gemini-1.5-flash"
+    tier3 = "models/gemini-1.5-flash-8b"  # Ultra-fast, low congestion version
+    tier4 = "models/gemini-pro"           # Classic stable engine
 
     # Build prompt
     context_text = f"Titlu: {title}"
@@ -82,23 +80,22 @@ def generate_dynamic_explanation(title, content, verdict_label, lang):
     headers = {"Content-Type": "application/json"}
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
 
-    try:
-        # Execution Block 1: Try Primary Discovered Model (e.g. 2.5-flash)
-        url_primary = f"https://generativelanguage.googleapis.com/v1beta/{primary_model}:generateContent"
-        response = requests.post(url_primary, headers=headers, json=payload, params=params, timeout=8)
-        
-        if response.status_code == 200:
-            return response.json()['candidates'][0]['content']['parts'][0]['text'].strip()
-        
-        # Execution Block 2: If primary is overloaded or fails, jump instantly to Secondary Fallback
-        elif response.status_code in [404, 429, 503]:
-            url_secondary = f"https://generativelanguage.googleapis.com/v1beta/{secondary_model}:generateContent"
-            alt_response = requests.post(url_secondary, headers=headers, json=payload, params=params, timeout=8)
-            if alt_response.status_code == 200:
-                return alt_response.json()['candidates'][0]['content']['parts'][0]['text'].strip()
-    except Exception:
-        pass
-        
+    # --- CASCADING EXECUTION LOOP ---
+    for model_path in [tier1, tier2, tier3, tier4]:
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/{model_path}:generateContent"
+            response = requests.post(url, headers=headers, json=payload, params=params, timeout=7)
+            
+            # If any of the 4 threads succeeds, return the text immediately
+            if response.status_code == 200:
+                return response.json()['candidates'][0]['content']['parts'][0]['text'].strip()
+                
+            # If it's a 503 (High Demand) or 429 (Rate Limit), the loop proceeds to the next model
+            elif response.status_code in [429, 503, 404]:
+                continue
+        except Exception:
+            continue
+            
     return None
 
 # --- 2. DATABASE LOGGING (PostgreSQL) ---
