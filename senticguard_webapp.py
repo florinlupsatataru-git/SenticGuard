@@ -38,7 +38,7 @@ def generate_dynamic_explanation(model_gemini, title, content, verdict_label, la
         return None
         
     # Build a precise prompt for Gemini based on the selected UI language
-    if lang in ["ro", "romana"]:
+    if lang == "RO":
         prompt = (
             f"Explică pe un ton sociologic și echilibrat, în maximum două propoziții scurte, "
             f"de ce următorul articol de știri a fost clasificat drept '{verdict_label}'.\n"
@@ -124,25 +124,21 @@ def log_analysis_to_gsheets(url_or_text, source_domain, verdict, confidence):
 
 # --- 3. LANGUAGE AND SESSION INITIALIZATION ---
 if "lang" not in st.session_state:
-    st.session_state["lang"] = "ro"
+    st.session_state["lang"] = "RO"
 
 # Log baseline user visit
 if "logged_visit" not in st.session_state:
     log_security_event("VISIT", 1, "Redirect to AI Interface")
     st.session_state["logged_visit"] = True
 
-# --- 4. LANGUAGE SELECTOR & DICTIONARY RESOLUTION ---
+# --- 4. LANGUAGE SELECTOR ---
 col_space, col_lang = st.columns([0.85, 0.15])
 with col_lang:
-    lang_choice = st.selectbox("🌐 Language", ["Română", "English"], index=0 if st.session_state["lang"] == "ro" else 1)
-    st.session_state["lang"] = "ro" if lang_choice == "Română" else "en"
+    lang_choice = st.selectbox("🌐 Language", ["Română", "English"], index=0 if st.session_state["lang"] == "RO" else 1)
+    st.session_state["lang"] = "RO" if lang_choice == "Română" else "EN"
 
-# Smart translation dictionary assignment mapping to avoid KeyErrors
-current_lang = st.session_state["lang"]
-if current_lang == "ro":
-    T = TRANSLATIONS.get("ro") or TRANSLATIONS.get("romana") or list(TRANSLATIONS.values())[0]
-else:
-    T = TRANSLATIONS.get("en") or TRANSLATIONS.get("english") or list(TRANSLATIONS.values())[0]
+# Map directly to your translation dictionary keys
+T = TRANSLATIONS[st.session_state["lang"]]
 
 # --- 5. MODEL CACHING ---
 @st.cache_resource
@@ -150,7 +146,6 @@ def load_classifier():
     """Initializes and caches the local Transformer pipeline."""
     return pipeline("text-classification", model="./model_temp", tokenizer="./model_temp")
 
-# Fixed the function name match error here
 classifier = load_classifier()
 
 # --- 6. CATEGORIES STYLING AND DICTIONARY ---
@@ -164,8 +159,8 @@ VERDICT_INFO = {
 }
 
 # --- 7. MAIN UI DESIGN ---
-st.markdown(f'<h1 class="main-title">{T["title"]}</h1>', unsafe_allow_html=True)
-st.markdown(f'<p class="subtitle">{T["subtitle"]}</p>', unsafe_allow_html=True)
+st.markdown(f'<h1 class="main-title">{T["main_title"]}</h1>', unsafe_allow_html=True)
+st.markdown(f'<p class="subtitle">{T["sub_title"]}</p>', unsafe_allow_html=True)
 
 # Custom CSS styling injection
 st.markdown("""
@@ -191,26 +186,26 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- 8. INPUT PROCESSING (URL VS TEXT) ---
-input_mode = st.radio(T["input_mode_label"], [T["mode_url"], T["mode_text"]], horizontal=True)
+input_mode = st.radio(T["lang_select"], [T["tab_link"], T["tab_manual"]], horizontal=True)
 
 input_data = ""
-if input_mode == T["mode_url"]:
-    input_data = st.text_input(T["url_placeholder"], placeholder="https://example.com/stire...")
+if input_mode == T["tab_link"]:
+    input_data = st.text_input(T["url_label"], placeholder="https://www.digi24.ro/...")
 else:
-    input_data = st.text_area(T["text_placeholder"], placeholder=T["text_area_hint"])
+    input_data = st.text_area(T["manual_label"], placeholder="Introduceți textul aici...")
 
 # --- 9. ANALYSIS LOGIC ---
-if st.button(T["btn_analyze"], type="primary"):
+if st.button(T["analyze_btn"], type="primary"):
     if not input_data.strip():
-        st.warning(T["warn_empty"])
+        st.warning(T["warn_no_input"])
     else:
         titlu_analiza = ""
         text_analiza = ""
         source_domain = "Direct Text Input"
         
         # URL Parsing block using newspaper3k
-        if input_mode == T["mode_url"]:
-            with st.spinner(T["sp_fetching"]):
+        if input_mode == T["tab_link"]:
+            with st.spinner(T["success_load"]):
                 try:
                     config = Config()
                     config.browser_user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)...'
@@ -221,14 +216,14 @@ if st.button(T["btn_analyze"], type="primary"):
                     text_analiza = article.text
                     source_domain = input_data.split("/")[2].replace("www.", "")
                 except Exception as e:
-                    st.error(f"{T['err_url']}: {e}")
+                    st.error(f"{T['error_load']}: {e}")
                     st.stop()
         else:
             titlu_analiza = input_data
             text_analiza = ""
 
         # Inference Processing
-        with st.spinner(T["sp_analyzing"]):
+        with st.spinner(T["analyze_btn"] + "..."):
             res_titlu = classifier(titlu_analiza[:512])[0]
             label_title_str = res_titlu['label']
             score_title = res_titlu['score']
@@ -261,12 +256,19 @@ if st.button(T["btn_analyze"], type="primary"):
                 final_score = score_title
 
             # Package result style properties
+            # Uses randomized static templates from your translation file as fallback
+            static_templates = T["templates"]["match"] if not res_content or id_title == label_map[res_content['label']] else T["templates"]["mismatch"]
+            fallback_explanation = random.choice(static_templates).format(
+                label_s=label_title_str, 
+                label_v=VERDICT_INFO[final_id]["label"]
+            )
+
             verdict_final = {
                 "id": final_id,
                 "label": VERDICT_INFO[final_id]["label"],
                 "class": VERDICT_INFO[final_id]["class"],
                 "score": final_score,
-                "explanation": T[f"desc_{final_id}"] # Fallback static explanation
+                "explanation": fallback_explanation
             }
 
             # --- DYNAMIC GEMINI EXPLANATION GENERATION ---
@@ -274,11 +276,11 @@ if st.button(T["btn_analyze"], type="primary"):
                 gemini_model, 
                 titlu_analiza, 
                 text_analiza, 
-                T[f"label_{final_id}"], 
+                verdict_final["label"], 
                 st.session_state["lang"]
             )
             
-            # If Gemini successfully generated a text, override the static one
+            # If Gemini successfully generated a text, override the static template
             if dynamic_exp:
                 verdict_final["explanation"] = dynamic_exp
 
@@ -290,7 +292,7 @@ if st.button(T["btn_analyze"], type="primary"):
         st.markdown(f"""
             <div class="card-result {verdict_final['class']}">
                 <div class="badge-verdict badge-{verdict_final['class'].split('-')[1]}">
-                    {T['verdict_prefix']} {T[f"label_{verdict_final['id']}"]}
+                    VERDICT: {verdict_final['label']}
                 </div>
                 <h3 class=\"article-title\">{titlu_analiza}</h3>
                 <p style="font-size: 1.1rem; color: #334155; font-weight: 500; line-height: 1.5; margin-bottom: 0;">
@@ -304,20 +306,19 @@ if st.button(T["btn_analyze"], type="primary"):
             col_r1, col_r2 = st.columns(2)
             with col_r1: 
                 st.metric(T["tech_manual_label"], res_titlu['label'])
-                st.progress(res_titlu['score'], text=f"{T['confidence']} {res_titlu['score']:.2%}\")")
+                st.progress(res_titlu['score'], text=f"{T['confidence']} {res_titlu['score']:.2%}")
             
             with col_r2: 
                 if res_content:
-                    st.metric(T["tech_content_label"], res_content['label'])
-                    st.progress(res_content['score'], text=f"{T['confidence']} {res_content['score']:.2%}\")")
+                    st.metric(T["deep_analysis"], res_content['label'])
+                    st.progress(res_content['score'], text=f"{T['confidence']} {res_content['score']:.2%}")
                 else:
-                    st.info(T["tech_no_content"])
+                    st.info("Corp de text indisponibil pentru analiză extinsă.")
             
             st.divider()
-            st.write(f"**{T['tech_final_label']}** {verdict_final['score']:.2%}")
+            st.write(f"**SCOR FINAL CONFIDENȚĂ:** {verdict_final['score']:.2%}")
 
 # --- 11. SIDEBAR LEGEND ---
 with st.sidebar:
     st.markdown(f"### 📋 {T['sidebar_title']}")
-    for k, v in VERDICT_INFO.items():
-        st.markdown(f"**{T[f'label_{k}']}** - {T[f'desc_{k}']}")
+    st.markdown(T["system_desc"])
