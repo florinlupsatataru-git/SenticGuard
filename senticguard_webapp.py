@@ -24,7 +24,7 @@ st.set_page_config(
 def initialize_gemini():
     """
     Initializes Google Gemini API checking multiple configurations, 
-    including the exact [gemini_api] block from your secrets.toml.
+    prioritizing the exact [gemini_api] block from your secrets.toml.
     """
     try:
         # 1. Matches exactly your secrets.toml structure: [gemini_api] -> api_key
@@ -40,7 +40,7 @@ def initialize_gemini():
             genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
             return genai.GenerativeModel('gemini-1.5-flash')
     except Exception as e:
-        pass
+        st.sidebar.error(f"Gemini Init Error: {e}")
     return None
 
 def generate_dynamic_explanation(model_gemini, title, content, verdict_label, lang):
@@ -48,18 +48,22 @@ def generate_dynamic_explanation(model_gemini, title, content, verdict_label, la
     if not model_gemini:
         return None
         
+    context_text = f"Titlu: {title}"
+    if content and content.strip():
+        context_text += f"\nContinut: {content[:1000]}"
+
     if lang == "RO":
         prompt = (
             f"Explică pe un ton sociologic și echilibrat, în maximum două propoziții scurte, "
-            f"de ce următorul articol de știri a fost clasificat drept '{verdict_label}'.\n"
-            f"Titlu: {title}\n"
+            f"de ce textul următor a fost clasificat drept '{verdict_label}'.\n\n"
+            f"{context_text}\n\n"
             f"Nu folosi introduceri precum 'Acest articol...', mergi direct la subiectul analizei discursului."
         )
     else:
         prompt = (
             f"Explain in a professional sociological tone, using a maximum of two short sentences, "
-            f"why the following news article was classified as '{verdict_label}'.\n"
-            f"Title: {title}\n"
+            f"why the following text was classified as '{verdict_label}'.\n\n"
+            f"{context_text}\n\n"
             f"Do not use conversational intros like 'This article...', go straight to the discourse analysis."
         )
 
@@ -282,11 +286,12 @@ if st.button(T["analyze_btn"], type="primary"):
             }
 
             # --- DYNAMIC GEMINI EXPLANATION GENERATION ---
+            # Send the raw string category label to ensure prompt compatibility
             dynamic_exp = generate_dynamic_explanation(
                 gemini_model, 
                 titlu_analiza, 
                 text_analiza, 
-                verdict_final["label"], 
+                VERDICT_INFO[final_id]["label"], 
                 st.session_state["lang"]
             )
             
