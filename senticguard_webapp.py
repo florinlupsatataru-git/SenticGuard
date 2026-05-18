@@ -347,5 +347,10 @@ if st.button(T["analyze_btn"], type="primary"):
 
 # --- 11. SIDEBAR LEGEND ---
 with st.sidebar:
-    st.markdown(f"### 📋 {T['sidebar_title']}")
+    col_icon, col_title = st.columns([0.2, 0.8])
+    with col_icon:
+        st.image("https://raw.githubusercontent.com/lorinlupsatataru-git/SenticGuard/main/icon.png", width=35)
+    with col_title:
+        st.markdown(f"### {T['sidebar_title']}")
+        
     st.markdown(T["system_desc"])
