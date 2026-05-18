@@ -25,19 +25,19 @@ def initialize_gemini():
     """
     Initializes Google Gemini API checking multiple configurations, 
     prioritizing the exact [gemini_api] block from your secrets.toml.
-    Uses 'gemini-1.5-flash-latest' to fix the v1beta 404 routing error.
+    Uses 'gemini-pro' to bypass v1beta route/model structure compatibility issues.
     """
     try:
         if "gemini_api" in st.secrets and "api_key" in st.secrets["gemini_api"]:
             genai.configure(api_key=st.secrets["gemini_api"]["api_key"])
-            # Using the exact model identifier accepted by v1beta
-            return genai.GenerativeModel('models/gemini-1.5-flash-latest')
+            # 'gemini-pro' is universally supported on legacy v1beta API endpoints
+            return genai.GenerativeModel('gemini-pro')
         elif "gemini" in st.secrets and "api_key" in st.secrets["gemini"]:
             genai.configure(api_key=st.secrets["gemini"]["api_key"])
-            return genai.GenerativeModel('models/gemini-1.5-flash-latest')
+            return genai.GenerativeModel('gemini-pro')
         elif "GEMINI_API_KEY" in st.secrets:
             genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-            return genai.GenerativeModel('models/gemini-1.5-flash-latest')
+            return genai.GenerativeModel('gemini-pro')
     except Exception as e:
         st.sidebar.error(f"Gemini Init Error: {e}")
     return None
