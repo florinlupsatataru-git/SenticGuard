@@ -24,7 +24,7 @@ st.set_page_config(
 def generate_dynamic_explanation(title, content, verdict_label, lang):
     """
     Dynamically discovers and uses the active Google AI Studio models.
-    Implements a bulletproof fallback if the primary model returns a 503 (High Demand).
+    Fails gracefully back to local templates without flooding the UI with errors during spikes.
     """
     if "gemini_api" in st.secrets and "api_key" in st.secrets["gemini_api"]:
         api_key = st.secrets["gemini_api"]["api_key"]
@@ -34,7 +34,6 @@ def generate_dynamic_explanation(title, content, verdict_label, lang):
         api_key = st.secrets.get("GEMINI_API_KEY")
 
     if not api_key:
-        st.error("❌ Eroare critică: Cheia API Gemini lipsește din secrets.toml!")
         return None
 
     # Step 1: Query Google's live catalog
@@ -43,19 +42,18 @@ def generate_dynamic_explanation(title, content, verdict_label, lang):
     
     discovered_models = []
     try:
-        catalog_response = requests.get(list_url, params=params, timeout=5)
+        catalog_response = requests.get(list_url, params=params, timeout=4)
         if catalog_response.status_code == 200:
             models_data = catalog_response.json().get("models", [])
             for m in models_data:
                 if "generateContent" in m.get("supportedGenerationMethods", []):
                     discovered_models.append(m.get("name"))
-    except Exception as e:
-        st.sidebar.warning(f"Catalog fetch warning: {e}")
+    except Exception:
+        pass
 
     # Set up our battle order based on discovery
     if len(discovered_models) >= 1:
         primary_model = discovered_models[0]
-        # Fallback to a secondary model if available, or down-grade to 1.5-flash manually
         secondary_model = discovered_models[1] if len(discovered_models) > 1 else "models/gemini-1.5-flash"
     else:
         primary_model = "models/gemini-1.5-flash"
@@ -84,23 +82,22 @@ def generate_dynamic_explanation(title, content, verdict_label, lang):
     headers = {"Content-Type": "application/json"}
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
 
-    # Execution Block 1: Try Primary Discovered Model (e.g. 2.5-flash)
-    url_primary = f"https://generativelanguage.googleapis.com/v1beta/{primary_model}:generateContent"
-    response = requests.post(url_primary, headers=headers, json=payload, params=params, timeout=10)
-    
-    if response.status_code == 200:
-        return response.json()['candidates'][0]['content']['parts'][0]['text'].strip()
-    
-    # Execution Block 2: If primary is overloaded (503) or fails, jump instantly to Secondary Fallback
-    elif response.status_code in [503, 429, 404]:
-        url_secondary = f"https://generativelanguage.googleapis.com/v1beta/{secondary_model}:generateContent"
-        alt_response = requests.post(url_secondary, headers=headers, json=payload, params=params, timeout=10)
-        if alt_response.status_code == 200:
-            return alt_response.json()['candidates'][0]['content']['parts'][0]['text'].strip()
-        else:
-            st.error(f"💥 Secondary Model Refusal ({secondary_model})! Status: {alt_response.status_code}")
-    else:
-        st.error(f"💥 Primary Model Refusal ({primary_model})! Status: {response.status_code} - {response.text}")
+    try:
+        # Execution Block 1: Try Primary Discovered Model (e.g. 2.5-flash)
+        url_primary = f"https://generativelanguage.googleapis.com/v1beta/{primary_model}:generateContent"
+        response = requests.post(url_primary, headers=headers, json=payload, params=params, timeout=8)
+        
+        if response.status_code == 200:
+            return response.json()['candidates'][0]['content']['parts'][0]['text'].strip()
+        
+        # Execution Block 2: If primary is overloaded or fails, jump instantly to Secondary Fallback
+        elif response.status_code in [404, 429, 503]:
+            url_secondary = f"https://generativelanguage.googleapis.com/v1beta/{secondary_model}:generateContent"
+            alt_response = requests.post(url_secondary, headers=headers, json=payload, params=params, timeout=8)
+            if alt_response.status_code == 200:
+                return alt_response.json()['candidates'][0]['content']['parts'][0]['text'].strip()
+    except Exception:
+        pass
         
     return None
 
@@ -290,6 +287,7 @@ if st.button(T["analyze_btn"], type="primary"):
                 else:
                     static_list = ["System analysis indicates a predominantly {label_v} style."]
 
+            # Generăm textul static ca fallback de bază
             fallback_explanation = random.choice(static_list).format(
                 label_s=label_title_str, 
                 label_v=localized_verdict
@@ -304,6 +302,8 @@ if st.button(T["analyze_btn"], type="primary"):
             }
 
             # --- DYNAMIC GEMINI EXPLANATION GENERATION ---
+            # Dacă funcția rulează cu succes, va suprascrie șablonul static.
+            # Dacă dă eroare pe rețea (503/404), returnează None, iar textul static rămâne intact pe ecran!
             dynamic_exp = generate_dynamic_explanation(
                 titlu_analiza, 
                 text_analiza, 
