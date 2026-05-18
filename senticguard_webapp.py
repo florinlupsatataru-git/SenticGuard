@@ -25,17 +25,19 @@ def initialize_gemini():
     """
     Initializes Google Gemini API checking multiple configurations, 
     prioritizing the exact [gemini_api] block from your secrets.toml.
+    Uses the full model string path to resolve 404 version mismatch.
     """
     try:
+        # Folosim calea completa 'models/gemini-1.5-flash' ceruta de API
         if "gemini_api" in st.secrets and "api_key" in st.secrets["gemini_api"]:
             genai.configure(api_key=st.secrets["gemini_api"]["api_key"])
-            return genai.GenerativeModel('gemini-1.5-flash')
+            return genai.GenerativeModel('models/gemini-1.5-flash')
         elif "gemini" in st.secrets and "api_key" in st.secrets["gemini"]:
             genai.configure(api_key=st.secrets["gemini"]["api_key"])
-            return genai.GenerativeModel('gemini-1.5-flash')
+            return genai.GenerativeModel('models/gemini-1.5-flash')
         elif "GEMINI_API_KEY" in st.secrets:
             genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-            return genai.GenerativeModel('gemini-1.5-flash')
+            return genai.GenerativeModel('models/gemini-1.5-flash')
     except Exception as e:
         st.sidebar.error(f"Gemini Init Error: {e}")
     return None
