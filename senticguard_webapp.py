@@ -20,13 +20,12 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- 1.1 GEMINI DYNAMIC CATALOG DISCOVERY RESOLVER ---
+# --- 1.1 GEMINI DYNAMIC DISCOVERY & EXTRACTION RESOLVER ---
 def generate_dynamic_explanation(title, content, verdict_label, lang):
     """
-    Dynamically discovers available models on the account using ListModels,
-    then targets the first valid text generation endpoint automatically.
+    Dynamically discovers and uses the active Google AI Studio models.
+    Implements a bulletproof fallback if the primary model returns a 503 (High Demand).
     """
-    # Secret fetching
     if "gemini_api" in st.secrets and "api_key" in st.secrets["gemini_api"]:
         api_key = st.secrets["gemini_api"]["api_key"]
     elif "gemini" in st.secrets and "api_key" in st.secrets["gemini"]:
@@ -35,31 +34,32 @@ def generate_dynamic_explanation(title, content, verdict_label, lang):
         api_key = st.secrets.get("GEMINI_API_KEY")
 
     if not api_key:
-        st.error("❌ Erroare critică: Cheia API Gemini lipsește din secrets.toml!")
+        st.error("❌ Eroare critică: Cheia API Gemini lipsește din secrets.toml!")
         return None
 
-    # Step 1: Query Google's live catalog to see what models this exact key is allowed to use
-    list_url = f"https://generativelanguage.googleapis.com/v1beta/models"
+    # Step 1: Query Google's live catalog
+    list_url = "https://generativelanguage.googleapis.com/v1beta/models"
     params = {"key": api_key}
     
-    selected_model_path = None
+    discovered_models = []
     try:
         catalog_response = requests.get(list_url, params=params, timeout=5)
         if catalog_response.status_code == 200:
             models_data = catalog_response.json().get("models", [])
-            # Find the first model that supports content generation
             for m in models_data:
                 if "generateContent" in m.get("supportedGenerationMethods", []):
-                    selected_model_path = m.get("name") # e.g., "models/gemini-1.5-flash" or alternative
-                    break
-        else:
-            st.error(f"⚠️ Catalog Fetch Failed: {catalog_response.status_code} - {catalog_response.text}")
+                    discovered_models.append(m.get("name"))
     except Exception as e:
-        st.error(f"⚠️ Catalog Network Fault: {e}")
+        st.sidebar.warning(f"Catalog fetch warning: {e}")
 
-    # Step 2: If no model was discovered, use a desperate fallback string
-    if not selected_model_path:
-        selected_model_path = "models/gemini-1.5-flash" # Standard guess if discovery fails
+    # Set up our battle order based on discovery
+    if len(discovered_models) >= 1:
+        primary_model = discovered_models[0]
+        # Fallback to a secondary model if available, or down-grade to 1.5-flash manually
+        secondary_model = discovered_models[1] if len(discovered_models) > 1 else "models/gemini-1.5-flash"
+    else:
+        primary_model = "models/gemini-1.5-flash"
+        secondary_model = "models/gemini-pro"
 
     # Build prompt
     context_text = f"Titlu: {title}"
@@ -71,7 +71,7 @@ def generate_dynamic_explanation(title, content, verdict_label, lang):
             f"Explică pe un ton sociologic și echilibrat, în maximum două propoziții scurte, "
             f"de ce textul următor a fost clasificat drept '{verdict_label}'.\n\n"
             f"{context_text}\n\n"
-            f"Nu foloi introduceri precum 'Acest articol...', mergi direct la subiectul analizei discursului."
+            f"Nu folosi introduceri precum 'Acest articol...', mergi direct la subiectul analizei discursului."
         )
     else:
         prompt = (
@@ -81,23 +81,28 @@ def generate_dynamic_explanation(title, content, verdict_label, lang):
             f"Do not use conversational intros like 'This article...', go straight to the discourse analysis."
         )
 
-    # Step 3: Call the dynamically resolved model path safely
-    url = f"https://generativelanguage.googleapis.com/v1beta/{selected_model_path}:generateContent"
     headers = {"Content-Type": "application/json"}
-    payload = {
-        "contents": [{
-            "parts": [{"text": prompt}]
-        }]
-    }
+    payload = {"contents": [{"parts": [{"text": prompt}]}]}
 
-    response = requests.post(url, headers=headers, json=payload, params=params, timeout=10)
+    # Execution Block 1: Try Primary Discovered Model (e.g. 2.5-flash)
+    url_primary = f"https://generativelanguage.googleapis.com/v1beta/{primary_model}:generateContent"
+    response = requests.post(url_primary, headers=headers, json=payload, params=params, timeout=10)
     
     if response.status_code == 200:
-        res_json = response.json()
-        return res_json['candidates'][0]['content']['parts'][0]['text'].strip()
+        return response.json()['candidates'][0]['content']['parts'][0]['text'].strip()
+    
+    # Execution Block 2: If primary is overloaded (503) or fails, jump instantly to Secondary Fallback
+    elif response.status_code in [503, 429, 404]:
+        url_secondary = f"https://generativelanguage.googleapis.com/v1beta/{secondary_model}:generateContent"
+        alt_response = requests.post(url_secondary, headers=headers, json=payload, params=params, timeout=10)
+        if alt_response.status_code == 200:
+            return alt_response.json()['candidates'][0]['content']['parts'][0]['text'].strip()
+        else:
+            st.error(f"💥 Secondary Model Refusal ({secondary_model})! Status: {alt_response.status_code}")
     else:
-        st.error(f"💥 Live Model Target Refusal ({selected_model_path})! Status: {response.status_code} - {response.text}")
-        return None
+        st.error(f"💥 Primary Model Refusal ({primary_model})! Status: {response.status_code} - {response.text}")
+        
+    return None
 
 # --- 2. DATABASE LOGGING (PostgreSQL) ---
 def get_db_connection():
