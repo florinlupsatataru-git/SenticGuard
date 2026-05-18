@@ -2,6 +2,8 @@ import streamlit as st
 import random
 import pandas as pd
 import psycopg2
+import google.generativeai as genai
+import toml
 from transformers import pipeline
 from newspaper import Article, Config
 from streamlit_gsheets import GSheetsConnection
@@ -17,6 +19,51 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# --- 1.1 GEMINI AI INITIALIZATION ---
+def initialize_gemini():
+    """Initializes Google Gemini API using the key stored in secrets.toml."""
+    try:
+        if "gemini" in st.secrets and "api_key" in st.secrets["gemini"]:
+            genai.configure(api_key=st.secrets["gemini"]["api_key"])
+            return genai.GenerativeModel('gemini-1.5-flash')
+    except Exception as e:
+        # Silently log or handle initialization errors to avoid crashing the UI
+        pass
+    return None
+
+def generate_dynamic_explanation(model_gemini, title, content, verdict_label, lang):
+    """Generates a dynamic 2-sentence explanation of why the article falls into the given category."""
+    if not model_gemini:
+        return None
+        
+    # Build a precise prompt for Gemini based on the selected UI language
+    if lang == "ro":
+        prompt = (
+            f"Explică pe un ton sociologic și echilibrat, în maximum două propoziții scurte, "
+            f"de ce următorul articol de știri a fost clasificat drept '{verdict_label}'.\n"
+            f"Titlu: {title}\n"
+            f"Nu folosi introduceri precum 'Acest articol...', mergi direct la subiectul analizei discursului."
+        )
+    else:
+        prompt = (
+            f"Explain in a professional sociological tone, using a maximum of two short sentences, "
+            f"why the following news article was classified as '{verdict_label}'.\n"
+            f"Title: {title}\n"
+            f"Do not use conversational intros like 'This article...', go straight to the discourse analysis."
+        )
+
+    try:
+        response = model_gemini.generate_content(prompt)
+        if response and response.text:
+            return response.text.strip()
+    except Exception as e:
+        # If API limit is hit or network fails, return None to trigger static fallback
+        return None
+    return None
+
+# Initialize the Gemini model instance globally
+gemini_model = initialize_gemini()
 
 # --- 2. DATABASE LOGGING (PostgreSQL) ---
 def get_db_connection():
@@ -37,259 +84,226 @@ def log_security_event(event_type="VISIT_8501", severity=1, description="Direct 
     Captures real IP even behind Docker proxy.
     """
     try:
-        # Capture IP from headers (X-Forwarded-For is essential for Docker setups)
         headers = st.context.headers
-        ip_address = headers.get("X-Forwarded-For", headers.get("Remote-Addr", "Unknown"))
-        
-        # Clean IP string if multiple IPs are present
-        if "," in ip_address:
-            ip_address = ip_address.split(",")[0].strip()
-
-        browser = headers.get("User-Agent", "Unknown")
-        referrer = headers.get("Referer", "Direct")
-
+        ip_addr = "Unknown"
+        if "X-Forwarded-For" in headers:
+            ip_addr = headers["X-Forwarded-For"].split(",")[0].strip()
+        elif "X-Real-IP" in headers:
+            ip_addr = headers["X-Real-IP"]
+            
         conn = get_db_connection()
         cur = conn.cursor()
         cur.execute(
-            "INSERT INTO security_logs (ip_address, event_type, severity, description, browser_info, referrer) VALUES (%s, %s, %s, %s, %s, %s)",
-            (ip_address, event_type, severity, description, browser, referrer)
+            "INSERT INTO security_logs (ip_address, event_type, severity, description) VALUES (%s, %s, %s, %s)",
+            (ip_addr, event_type, severity, description)
         )
         conn.commit()
         cur.close()
         conn.close()
     except Exception as e:
-        # Error is printed to docker logs but won't crash the UI
-        print(f"Postgres Logging Error: {e}")
+        pass # Anti-crash measure for DB logging failures
 
-# Automatically trigger logging when the app loads
-log_security_event()
-
-# --- 3. ANALYTICS LOGGING (Google Sheets) ---
-def log_analysis(input_data, verdict, score, mode):
-    """Saves analysis metadata to Google Sheets for administrative stats."""
+def log_analysis_to_gsheets(url_or_text, source_domain, verdict, confidence):
+    """Logs verification metadata directly into Google Sheets for analytics."""
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
-        existing_logs = conn.read(worksheet="Logs", ttl=0)
+        df_existing = conn.read(worksheet="Logs", ttl=0)
         
-        domain = "Manual Input"
-        if mode == "Link" and input_data.startswith("http"):
-            domain = input_data.split('/')[2].replace('www.', '')
-
-        new_log = pd.DataFrame([{
+        new_row = pd.DataFrame([{
             "timestamp": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "source": domain,
+            "input_data": url_or_text[:255],
+            "source": source_domain,
             "verdict": verdict,
-            "confidence": round(score, 4),
-            "mode": mode,
-            "detail": input_data
+            "confidence": float(confidence)
         }])
         
-        updated_df = pd.concat([existing_logs, new_log], ignore_index=True)
-        conn.update(worksheet="Logs", data=updated_df)
-    except Exception:
+        df_updated = pd.concat([df_existing, new_row], ignore_index=True)
+        conn.update(worksheet="Logs", data=df_updated)
+    except Exception as e:
         pass
 
-# --- 4. LANGUAGE SELECTION & SESSION STATE ---
-if 'reset_key' not in st.session_state:
-    st.session_state.reset_key = 0
+# --- 3. LANGUAGE AND SESSION INITIALIZATION ---
+if "lang" not in st.session_state:
+    st.session_state["lang"] = "ro"
 
-with st.sidebar:
-    if 'lang_idx' not in st.session_state:
-        st.session_state.lang_idx = 0
-        
-    st.title("SenticGuard Web v3.3")
-    lang = st.selectbox("Alege Limba / Select Language", ["RO", "EN"], index=st.session_state.lang_idx)
-    T = TRANSLATIONS[lang]
-    st.markdown("---")
+# Log baseline user visit
+if "logged_visit" not in st.session_state:
+    log_security_event("VISIT", 1, "Redirect to AI Interface")
+    st.session_state["logged_visit"] = True
 
-# --- 5. DEEP LINKING LOGIC ---
-query_params = st.query_params
-external_url = query_params.get("url")
+# --- 4. LANGUAGE SELECTOR ---
+col_space, col_lang = st.columns([0.85, 0.15])
+with col_lang:
+    lang_choice = st.selectbox("🌐 Language", ["Română", "English"], index=0 if st.session_state["lang"] == "ro" else 1)
+    st.session_state["lang"] = "ro" if lang_choice == "Română" else "en"
 
-if external_url and 'auto_analyzed' not in st.session_state:
-    st.session_state.auto_analyzed = external_url
-    trigger_external = True
-else:
-    trigger_external = False
+T = TRANSLATIONS[st.session_state["lang"]]
 
-# --- 6. CATEGORY DEFINITIONS ---
-CATEGORIES = {
-    "OBIECTIV": "#10b981",
-    "ALARMIST": "#ef4444",
-    "SENZATIONAL": "#f59e0b",
-    "CONFLICTUAL": "#8b5cf6",
-    "INFORMATIV": "#3b82f6",
-    "OPINIE": "#64748b"
+# --- 5. MODEL CACHING ---
+@st.cache_resource
+def load_model():
+    """Initializes and caches the local Transformer pipeline."""
+    return pipeline("text-classification", model="./model_temp", tokenizer="./model_temp")
+
+classifier = load_model()
+
+# --- 6. CATEGORIES STYLING AND DICTIONARY ---
+VERDICT_INFO = {
+    0: {"label": "OBIECTIV", "class": "card-objective"},
+    1: {"label": "ALARMIST", "class": "card-alarmist"},
+    2: {"label": "SENZATIONAL", "class": "card-senzational"},
+    3: {"label": "CONFLICTUAL", "class": "card-conflictual"},
+    4: {"label": "INFORMATIV", "class": "card-informativ"},
+    5: {"label": "OPINIE", "class": "card-opinie"}
 }
 
-# --- 7. CUSTOM UI STYLING ---
-st.markdown(f"""
+# --- 7. MAIN UI DESIGN ---
+st.markdown(f'<h1 class="main-title">{T["title"]}</h1>', unsafe_allow_html=True)
+st.markdown(f'<p class="subtitle">{T["subtitle"]}</p>', unsafe_allow_html=True)
+
+# Custom CSS styling injection
+st.markdown("""
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
-    html, body, [class*="css"] {{ font-family: 'Inter', sans-serif; }}
-    .verdict-card {{
-        background: white; border: 1px solid #e2e8f0; padding: 25px; 
-        border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
-        margin-bottom: 20px;
-    }}
-    .verdict-badge {{ 
-        display: inline-block; padding: 4px 12px; border-radius: 6px; 
-        color: white; font-size: 13px; font-weight: 700; 
-        text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 15px; 
-    }}
-    .article-title {{
-        margin-top: 0; margin-bottom: 15px; color: #0f172a; 
-        font-size: 1.4rem; font-weight: 700; line-height: 1.3;
-    }}
+    .main-title { text-align: center; font-size: 2.8rem; font-weight: 800; color: #1e293b; margin-bottom: 0.5rem; }
+    .subtitle { text-align: center; font-size: 1.2rem; color: #64748b; margin-bottom: 2.5rem; }
+    .card-result { border-radius: 12px; padding: 1.8rem; margin-top: 1.5rem; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.05); }
+    .card-objective { background-color: #f0fdf4; border-left: 6px solid #16a34a; }
+    .card-alarmist { background-color: #fef2f2; border-left: 6px solid #dc2626; }
+    .card-senzational { background-color: #fffbeb; border-left: 6px solid #d97706; }
+    .card-conflictual { background-color: #faf5ff; border-left: 6px solid #9333ea; }
+    .card-informativ { background-color: #eff6ff; border-left: 6px solid #2563eb; }
+    .card-opinie { background-color: #f8fafc; border-left: 6px solid #475569; }
+    .badge-verdict { display: inline-block; padding: 0.25rem 0.75rem; font-size: 0.85rem; font-weight: 700; border-radius: 20px; text-transform: uppercase; margin-bottom: 0.75rem; }
+    .badge-objective { background-color: #dcfce7; color: #16a34a; }
+    .badge-alarmist { background-color: #fee2e2; color: #dc2626; }
+    .badge-senzational { background-color: #fef3c7; color: #d97706; }
+    .badge-conflictual { background-color: #f3e8ff; color: #9333ea; }
+    .badge-informativ { background-color: #dbeafe; color: #2563eb; }
+    .badge-opinie { background-color: #f1f5f9; color: #475569; }
+    .article-title { font-size: 1.4rem; font-weight: 700; color: #0f172a; margin-top: 0; margin-bottom: 0.75rem; line-height: 1.4; }
     </style>
 """, unsafe_allow_html=True)
 
-# --- 8. MODEL INITIALIZATION ---
-@st.cache_resource
-def load_model():
-    model_path = "florin-lupsa/NewsAnalyzer" 
-    try:
-        return pipeline("text-classification", model=model_path, tokenizer=model_path)
-    except Exception as e:
-        st.error(f"Error loading model: {e}")
-        return None
+# --- 8. INPUT PROCESSING (URL VS TEXT) ---
+input_mode = st.radio(T["input_mode_label"], [T["mode_url"], T["mode_text"]], horizontal=True)
 
-cls_pipeline = load_model()
+input_data = ""
+if input_mode == T["mode_url"]:
+    input_data = st.text_input(T["url_placeholder"], placeholder="https://example.com/stire...")
+else:
+    input_data = st.text_area(T["text_placeholder"], placeholder=T["text_area_hint"])
 
-def analyze_text(text):
-    if not text or not cls_pipeline:
-        return None
-    prediction = cls_pipeline(text.strip()[:512])[0]
-    label = prediction['label']
-    return {
-        "label": label,
-        "score": float(prediction['score']),
-        "color": CATEGORIES.get(label, "#64748b"),
-        "desc": T["categories"].get(label, "")
-    }
-
-def get_final_verdict(res_titlu, res_content):
-    if not res_content:
-        label_v = T["labels_map"].get(res_titlu['label'], res_titlu['label'])
-        phrase = random.choice(T["phrases"]["match_high"]).format(label_v=label_v)
-        res = res_titlu.copy()
-        res['explanation'] = phrase
-        return res
-    
-    score_final_c = res_content['score'] * WEIGHT_CONTENT
-    score_final_t = res_titlu['score'] * WEIGHT_TITLE
-    
-    if score_final_c >= score_final_t:
-        verdict_final = res_content.copy()
-        verdict_final['score'] = score_final_c + (res_titlu['score'] * 0.1) 
+# --- 9. ANALYSIS LOGIC ---
+if st.button(T["btn_analyze"], type="primary"):
+    if not input_data.strip():
+        st.warning(T["warn_empty"])
     else:
-        verdict_final = res_titlu.copy()
-        verdict_final['score'] = score_final_t + (res_content['score'] * 0.1)
+        titlu_analiza = ""
+        text_analiza = ""
+        source_domain = "Direct Text Input"
+        
+        # URL Parsing block using newspaper3k
+        if input_mode == T["mode_url"]:
+            with st.spinner(T["sp_fetching"]):
+                try:
+                    config = Config()
+                    config.browser_user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)...'
+                    article = Article(input_data, config=config)
+                    article.download()
+                    article.parse()
+                    titlu_analiza = article.title
+                    text_analiza = article.text
+                    source_domain = input_data.split("/")[2].replace("www.", "")
+                except Exception as e:
+                    st.error(f"{T['err_url']}: {e}")
+                    st.stop()
+        else:
+            titlu_analiza = input_data
+            text_analiza = ""
 
-    label_v_str = T["labels_map"].get(verdict_final['label'], verdict_final['label'])
-    label_s_str = T["labels_map"].get(res_titlu['label'] if score_final_c >= score_final_t else res_content['label'])
-
-    is_match = res_titlu['label'] == res_content['label']
-    is_high = verdict_final['score'] > 0.85
-    
-    if is_match:
-        category = "match_high" if is_high else "match_low"
-    else:
-        category = "mismatch_high" if is_high else "mismatch_low"
-    
-    phrase_template = random.choice(T["phrases"][category])
-    verdict_final['explanation'] = phrase_template.format(label_v=label_v_str, label_s=label_s_str)
-    
-    return verdict_final
-
-# --- 9. USER INTERFACE ---
-st.title(T["main_title"])
-
-col_header, col_logo = st.columns([4, 1])
-with col_header:
-    st.markdown(f"#### {T['sub_title']}")
-    st.markdown(f'<p style="font-size: 0.95rem; color: #475569;">{T["system_desc"]}</p>', unsafe_allow_html=True)
-with col_logo:
-    st.image("https://raw.githubusercontent.com/florinlupsatataru-git/SenticGuard/main/icon.png", width=100)
-
-st.markdown("<br>", unsafe_allow_html=True)
-
-analysis_mode = st.radio("Source:", [T["tab_link"], T["tab_manual"]], horizontal=True, label_visibility="collapsed")
-
-with st.container():
-    if analysis_mode == T["tab_link"]:
-        default_val = external_url if external_url else ""
-        input_data = st.text_input(T["url_label"], value=default_val, placeholder="https://...", key=f"url_{st.session_state.reset_key}")
-    else:
-        input_data = st.text_area(T["manual_label"], height=100, key=f"manual_{st.session_state.reset_key}")
-    
-    c1, c2 = st.columns([1, 5])
-    with c1:
-        analyze_clicked = st.button(T["analyze_btn"], type="primary", use_container_width=True)
-        if trigger_external:
-            analyze_clicked = True
+        # Inference Processing
+        with st.spinner(T["sp_analyzing"]):
+            res_titlu = classifier(titlu_analiza[:512])[0]
+            label_title_str = res_titlu['label']
+            score_title = res_titlu['score']
             
-    with c2:
-        if st.button(T["reset_btn"], type="secondary"):
-            if 'auto_analyzed' in st.session_state:
-                del st.session_state.auto_analyzed
-            st.session_state.reset_key += 1
-            st.rerun()
+            res_content = None
+            if text_analiza.strip():
+                res_content = classifier(text_analiza[:512])[0]
+                label_content_str = res_content['label']
+                score_content = res_content['score']
 
-# --- 10. PROCESSING & RESULTS ---
-if analyze_clicked:
-    titlu_analiza = ""
-    text_analiza = ""
+            # Map text labels back to integers
+            label_map = {"OBIECTIV":0, "ALARMIST":1, "SENZATIONAL":2, "CONFLICTUAL":3, "INFORMATIV":4, "OPINIE":5}
+            id_title = label_map[label_title_str]
+            
+            # Weighted average logic
+            if res_content:
+                id_content = label_map[label_content_str]
+                if id_title == id_content:
+                    final_id = id_title
+                    final_score = (score_title * WEIGHT_TITLE) + (score_content * WEIGHT_CONTENT)
+                else:
+                    if score_content >= 0.65:
+                        final_id = id_content
+                        final_score = score_content
+                    else:
+                        final_id = id_title
+                        final_score = score_title
+            else:
+                final_id = id_title
+                final_score = score_title
 
-    if analysis_mode == T["tab_link"] and input_data:
-        try:
-            with st.spinner('Scraping content...'):
-                config = Config()
-                config.browser_user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36...'
-                article = Article(input_data, config=config)
-                article.download(); article.parse()
-                titlu_analiza = article.title
-                text_analiza = article.text
-        except Exception as e:
-            st.error(f"{T['error_load']} {e}")
-    elif analysis_mode == T["tab_manual"] and input_data:
-        titlu_analiza = input_data
+            # Package result style properties
+            verdict_final = {
+                "id": final_id,
+                "label": VERDICT_INFO[final_id]["label"],
+                "class": VERDICT_INFO[final_id]["class"],
+                "score": final_score,
+                "explanation": T[f"desc_{final_id}"] # Fallback static explanation
+            }
 
-    if not titlu_analiza:
-        st.warning(T["warn_no_input"])
-    else:
-        res_titlu = analyze_text(titlu_analiza)
-        res_content = analyze_text(text_analiza) if text_analiza else None
-        verdict_final = get_final_verdict(res_titlu, res_content)
+            # --- DYNAMIC GEMINI EXPLANATION GENERATION ---
+            dynamic_exp = generate_dynamic_explanation(
+                gemini_model, 
+                titlu_analiza, 
+                text_analiza, 
+                T[f"label_{final_id}"], 
+                st.session_state["lang"]
+            )
+            
+            # If Gemini successfully generated a text, override the static one
+            if dynamic_exp:
+                verdict_final["explanation"] = dynamic_exp
 
-        # LOG THE ANALYSIS FOR ADMIN STATS
-        log_mode = "Link" if analysis_mode == T["tab_link"] else "Manual"
-        log_analysis(input_data, verdict_final['label'], verdict_final['score'], log_mode)
+        # Async telemetry logs saving
+        log_security_event("VERIFY", 1, f"Analyzed item from {source_domain}. Result: {verdict_final['label']}")
+        log_analysis_to_gsheets(titlu_analiza, source_domain, verdict_final['label'], verdict_final['score'])
 
-        # MAIN VERDICT CARD
+        # --- 10. RESULTS RENDERING (HTML TEMPLATE) ---
         st.markdown(f"""
-            <div class="verdict-card" style="border-top: 5px solid {verdict_final['color']};">
-                <div class="verdict-badge" style="background-color: {verdict_final['color']};">
-                    {verdict_final['label']}
+            <div class="card-result {verdict_final['class']}">
+                <div class="badge-verdict badge-{verdict_final['class'].split('-')[1]}">
+                    {T['verdict_prefix']} {T[f"label_{verdict_final['id']}"]}
                 </div>
-                <h3 class="article-title">{titlu_analiza}</h3>
+                <h3 class=\"article-title\">{titlu_analiza}</h3>
                 <p style="font-size: 1.1rem; color: #334155; font-weight: 500; line-height: 1.5; margin-bottom: 0;">
                     {verdict_final['explanation']}
                 </p>
             </div>
         """, unsafe_allow_html=True)
 
-        # TECHNICAL DETAILS
+        # TECHNICAL DETAILS EXPANDER
         with st.expander(T['deep_title']):
             col_r1, col_r2 = st.columns(2)
             with col_r1: 
                 st.metric(T["tech_manual_label"], res_titlu['label'])
-                st.progress(res_titlu['score'], text=f"{T['confidence']} {res_titlu['score']:.2%}")
+                st.progress(res_titlu['score'], text=f"{T['confidence']} {res_titlu['score']:.2%}\")")
             
             with col_r2: 
                 if res_content:
                     st.metric(T["tech_content_label"], res_content['label'])
-                    st.progress(res_content['score'], text=f"{T['confidence']} {res_content['score']:.2%}")
+                    st.progress(res_content['score'], text=f"{T['confidence']} {res_content['score']:.2%}\")")
                 else:
                     st.info(T["tech_no_content"])
             
@@ -298,6 +312,6 @@ if analyze_clicked:
 
 # --- 11. SIDEBAR LEGEND ---
 with st.sidebar:
-    st.markdown("---")
-    for cat, color in CATEGORIES.items():
-        st.markdown(f'<div style="margin-bottom: 12px;"><span style="color:{color}; font-weight:bold; font-size:13px;">{cat}</span><br><small style="color:#64748b; line-height:1.2;">{T["categories"].get(cat, "")}</small></div>', unsafe_allow_html=True)
+    st.markdown(f"### 📋 {T['sidebar_title']}")
+    for k, v in VERDICT_INFO.items():
+        st.markdown(f"**{T[f'label_{k}']}** - {T[f'desc_{k}']}")
