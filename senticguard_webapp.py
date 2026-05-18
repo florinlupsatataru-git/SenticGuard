@@ -27,15 +27,12 @@ def initialize_gemini():
     prioritizing the exact [gemini_api] block from your secrets.toml.
     """
     try:
-        # 1. Matches exactly your secrets.toml structure: [gemini_api] -> api_key
         if "gemini_api" in st.secrets and "api_key" in st.secrets["gemini_api"]:
             genai.configure(api_key=st.secrets["gemini_api"]["api_key"])
             return genai.GenerativeModel('gemini-1.5-flash')
-        # 2. Fallback to standard [gemini] layout
         elif "gemini" in st.secrets and "api_key" in st.secrets["gemini"]:
             genai.configure(api_key=st.secrets["gemini"]["api_key"])
             return genai.GenerativeModel('gemini-1.5-flash')
-        # 3. Fallback to flat environment variable layout
         elif "GEMINI_API_KEY" in st.secrets:
             genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
             return genai.GenerativeModel('gemini-1.5-flash')
@@ -44,7 +41,7 @@ def initialize_gemini():
     return None
 
 def generate_dynamic_explanation(model_gemini, title, content, verdict_label, lang):
-    """Generates a dynamic 2-sentence explanation of why the article falls into the given category."""
+    """Generates a dynamic 2-sentence explanation extracting cleanly from Gemini response object."""
     if not model_gemini:
         return None
         
@@ -69,9 +66,20 @@ def generate_dynamic_explanation(model_gemini, title, content, verdict_label, la
 
     try:
         response = model_gemini.generate_content(prompt)
-        if response and response.text:
+        
+        # Modern defensive resolution for Google GenerativeAI response objects
+        if hasattr(response, 'text') and response.text:
             return response.text.strip()
+        
+        # Alternative fallback extract if .text blocks on parsing
+        if hasattr(response, 'parts') and response.parts:
+            return response.parts[0].text.strip()
+            
+        if hasattr(response, 'candidates') and response.candidates:
+            return response.candidates[0].content.parts[0].text.strip()
     except Exception as e:
+        # Print the exact call error in the sidebar if the request itself fails
+        st.sidebar.error(f"Gemini Execution Error: {e}")
         return None
     return None
 
@@ -256,10 +264,8 @@ if st.button(T["analyze_btn"], type="primary"):
                 final_id = id_title
                 final_score = score_title
 
-            # Dynamic localized label lookup from translations mapping
             localized_verdict = T.get(f"label_{final_id}", VERDICT_INFO[final_id]["label"])
 
-            # Tolerant dictionary template reading
             trans_templates = T.get("template") or T.get("templates") or {}
             is_match = not res_content or id_title == label_map[res_content['label']]
             branch_key = "match" if is_match else "mismatch"
@@ -286,7 +292,6 @@ if st.button(T["analyze_btn"], type="primary"):
             }
 
             # --- DYNAMIC GEMINI EXPLANATION GENERATION ---
-            # Send the raw string category label to ensure prompt compatibility
             dynamic_exp = generate_dynamic_explanation(
                 gemini_model, 
                 titlu_analiza, 
