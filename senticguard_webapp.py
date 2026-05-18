@@ -349,7 +349,7 @@ if st.button(T["analyze_btn"], type="primary"):
 with st.sidebar:
     col_icon, col_title = st.columns([0.2, 0.8])
     with col_icon:
-        st.image("https://raw.githubusercontent.com/lorinlupsatataru-git/SenticGuard/main/icon.png", width=35)
+        st.image("https://raw.githubusercontent.com/florinlupsatataru-git/SenticGuard/main/icon.png", width=35)
     with col_title:
         st.markdown(f"### {T['sidebar_title']}")
         
