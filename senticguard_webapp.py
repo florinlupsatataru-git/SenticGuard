@@ -28,7 +28,7 @@ def initialize_gemini():
             genai.configure(api_key=st.secrets["gemini"]["api_key"])
             return genai.GenerativeModel('gemini-1.5-flash')
     except Exception as e:
-        # Silently log or handle initialization errors to avoid crashing the UI
+        # Silently handle initialization errors to avoid crashing the UI
         pass
     return None
 
@@ -38,7 +38,7 @@ def generate_dynamic_explanation(model_gemini, title, content, verdict_label, la
         return None
         
     # Build a precise prompt for Gemini based on the selected UI language
-    if lang == "ro":
+    if lang in ["ro", "romana"]:
         prompt = (
             f"Explică pe un ton sociologic și echilibrat, în maximum două propoziții scurte, "
             f"de ce următorul articol de știri a fost clasificat drept '{verdict_label}'.\n"
@@ -131,21 +131,18 @@ if "logged_visit" not in st.session_state:
     log_security_event("VISIT", 1, "Redirect to AI Interface")
     st.session_state["logged_visit"] = True
 
-# --- 4. LANGUAGE SELECTOR ---
+# --- 4. LANGUAGE SELECTOR & DICTIONARY RESOLUTION ---
 col_space, col_lang = st.columns([0.85, 0.15])
 with col_lang:
     lang_choice = st.selectbox("🌐 Language", ["Română", "English"], index=0 if st.session_state["lang"] == "ro" else 1)
     st.session_state["lang"] = "ro" if lang_choice == "Română" else "en"
 
-# SAFETIES FOR TRANSLATION KEYS:
-if "ro" in TRANSLATIONS:
-    T = TRANSLATIONS[st.session_state["lang"]]
-elif "romana" in TRANSLATIONS:
-    translation_key = "romana" if st.session_state["lang"] == "ro" else "english"
-    T = TRANSLATIONS[translation_key]
+# Smart translation dictionary assignment mapping to avoid KeyErrors
+current_lang = st.session_state["lang"]
+if current_lang == "ro":
+    T = TRANSLATIONS.get("ro") or TRANSLATIONS.get("romana") or list(TRANSLATIONS.values())[0]
 else:
-    first_key = list(TRANSLATIONS.keys())[0]
-    T = TRANSLATIONS[first_key]
+    T = TRANSLATIONS.get("en") or TRANSLATIONS.get("english") or list(TRANSLATIONS.values())[0]
 
 # --- 5. MODEL CACHING ---
 @st.cache_resource
@@ -153,6 +150,7 @@ def load_classifier():
     """Initializes and caches the local Transformer pipeline."""
     return pipeline("text-classification", model="./model_temp", tokenizer="./model_temp")
 
+# Fixed the function name match error here
 classifier = load_classifier()
 
 # --- 6. CATEGORIES STYLING AND DICTIONARY ---
