@@ -10,3 +10,5 @@ st-gsheets-connection
 gspread
 google-auth
 gdown
+google-generativeai
+toml
