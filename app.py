@@ -86,8 +86,9 @@ def public_home():
         abort(403)
     
     log_event(ip, "VISIT", 1, "Redirect to AI Interface")
-    # Redirect to the Streamlit Public Interface on port 8502
-    return redirect("http://89.168.117.245:8502")
+    # Redirect to the Streamlit Public Interface on port 8501
+    host_complet = request.host.split(':')[0]
+    return redirect(f"http://{host_complet}:8501")
 
 @app.route('/wp-admin')
 @app.route('/.env')
