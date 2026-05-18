@@ -131,36 +131,29 @@ if "logged_visit" not in st.session_state:
     log_security_event("VISIT", 1, "Redirect to AI Interface")
     st.session_state["logged_visit"] = True
 
-
-# --- 3. LANGUAGE AND SESSION INITIALIZATION ---
-if "lang" not in st.session_state:
-    st.session_state["lang"] = "ro"
-
-# Log baseline user visit
-if "logged_visit" not in st.session_state:
-    log_security_event("VISIT", 1, "Redirect to AI Interface")
-    st.session_state["logged_visit"] = True
-
 # --- 4. LANGUAGE SELECTOR ---
 col_space, col_lang = st.columns([0.85, 0.15])
 with col_lang:
-    # Let's match exactly how your original code mapped the language keys
     lang_choice = st.selectbox("🌐 Language", ["Română", "English"], index=0 if st.session_state["lang"] == "ro" else 1)
     st.session_state["lang"] = "ro" if lang_choice == "Română" else "en"
 
 # SAFETIES FOR TRANSLATION KEYS:
-# If TRANSLATIONS uses keys like 'romana'/'english' instead of 'ro'/'en', let's map them safely
 if "ro" in TRANSLATIONS:
     T = TRANSLATIONS[st.session_state["lang"]]
 elif "romana" in TRANSLATIONS:
     translation_key = "romana" if st.session_state["lang"] == "ro" else "english"
     T = TRANSLATIONS[translation_key]
 else:
-    # Absolute fallback to the first available language key so the app never crashes
     first_key = list(TRANSLATIONS.keys())[0]
     T = TRANSLATIONS[first_key]
 
-classifier = load_model()
+# --- 5. MODEL CACHING ---
+@st.cache_resource
+def load_classifier():
+    """Initializes and caches the local Transformer pipeline."""
+    return pipeline("text-classification", model="./model_temp", tokenizer="./model_temp")
+
+classifier = load_classifier()
 
 # --- 6. CATEGORIES STYLING AND DICTIONARY ---
 VERDICT_INFO = {
