@@ -28,7 +28,6 @@ def initialize_gemini():
             genai.configure(api_key=st.secrets["gemini"]["api_key"])
             return genai.GenerativeModel('gemini-1.5-flash')
     except Exception as e:
-        # Silently handle initialization errors to avoid crashing the UI
         pass
     return None
 
@@ -37,7 +36,6 @@ def generate_dynamic_explanation(model_gemini, title, content, verdict_label, la
     if not model_gemini:
         return None
         
-    # Build a precise prompt for Gemini based on the selected UI language
     if lang == "RO":
         prompt = (
             f"Explică pe un ton sociologic și echilibrat, în maximum două propoziții scurte, "
@@ -58,7 +56,6 @@ def generate_dynamic_explanation(model_gemini, title, content, verdict_label, la
         if response and response.text:
             return response.text.strip()
     except Exception as e:
-        # If API limit is hit or network fails, return None to trigger static fallback
         return None
     return None
 
@@ -67,9 +64,7 @@ gemini_model = initialize_gemini()
 
 # --- 2. DATABASE LOGGING (PostgreSQL) ---
 def get_db_connection():
-    """
-    Establishes connection to the PostgreSQL database using Streamlit secrets.
-    """
+    """Establishes connection to the PostgreSQL database using Streamlit secrets."""
     return psycopg2.connect(
         host=st.secrets["postgres"]["host"],
         database=st.secrets["postgres"]["database"],
@@ -79,10 +74,7 @@ def get_db_connection():
     )
 
 def log_security_event(event_type="VISIT_8501", severity=1, description="Direct access to Streamlit interface"):
-    """
-    Logs access and security events directly to PostgreSQL.
-    Captures real IP even behind Docker proxy.
-    """
+    """Logs access and security events directly to PostgreSQL."""
     try:
         headers = st.context.headers
         ip_addr = "Unknown"
@@ -101,7 +93,7 @@ def log_security_event(event_type="VISIT_8501", severity=1, description="Direct 
         cur.close()
         conn.close()
     except Exception as e:
-        pass # Anti-crash measure for DB logging failures
+        pass
 
 def log_analysis_to_gsheets(url_or_text, source_domain, verdict, confidence):
     """Logs verification metadata directly into Google Sheets for analytics."""
@@ -126,7 +118,6 @@ def log_analysis_to_gsheets(url_or_text, source_domain, verdict, confidence):
 if "lang" not in st.session_state:
     st.session_state["lang"] = "RO"
 
-# Log baseline user visit
 if "logged_visit" not in st.session_state:
     log_security_event("VISIT", 1, "Redirect to AI Interface")
     st.session_state["logged_visit"] = True
@@ -137,7 +128,6 @@ with col_lang:
     lang_choice = st.selectbox("🌐 Language", ["Română", "English"], index=0 if st.session_state["lang"] == "RO" else 1)
     st.session_state["lang"] = "RO" if lang_choice == "Română" else "EN"
 
-# Map directly to your translation dictionary keys
 T = TRANSLATIONS[st.session_state["lang"]]
 
 # --- 5. MODEL CACHING ---
@@ -162,7 +152,6 @@ VERDICT_INFO = {
 st.markdown(f'<h1 class="main-title">{T["main_title"]}</h1>', unsafe_allow_html=True)
 st.markdown(f'<p class="subtitle">{T["sub_title"]}</p>', unsafe_allow_html=True)
 
-# Custom CSS styling injection
 st.markdown("""
     <style>
     .main-title { text-align: center; font-size: 2.8rem; font-weight: 800; color: #1e293b; margin-bottom: 0.5rem; }
@@ -203,7 +192,6 @@ if st.button(T["analyze_btn"], type="primary"):
         text_analiza = ""
         source_domain = "Direct Text Input"
         
-        # URL Parsing block using newspaper3k
         if input_mode == T["tab_link"]:
             with st.spinner(T["success_load"]):
                 try:
@@ -222,7 +210,6 @@ if st.button(T["analyze_btn"], type="primary"):
             titlu_analiza = input_data
             text_analiza = ""
 
-        # Inference Processing
         with st.spinner(T["analyze_btn"] + "..."):
             res_titlu = classifier(titlu_analiza[:512])[0]
             label_title_str = res_titlu['label']
@@ -234,11 +221,9 @@ if st.button(T["analyze_btn"], type="primary"):
                 label_content_str = res_content['label']
                 score_content = res_content['score']
 
-            # Map text labels back to integers
             label_map = {"OBIECTIV":0, "ALARMIST":1, "SENZATIONAL":2, "CONFLICTUAL":3, "INFORMATIV":4, "OPINIE":5}
             id_title = label_map[label_title_str]
             
-            # Weighted average logic
             if res_content:
                 id_content = label_map[label_content_str]
                 if id_title == id_content:
@@ -255,10 +240,25 @@ if st.button(T["analyze_btn"], type="primary"):
                 final_id = id_title
                 final_score = score_title
 
-            # Package result style properties
-            # Fixed here: Changed T["templates"] to T["template"] to match translations structure
-            static_templates = T["template"]["match"] if not res_content or id_title == label_map[res_content['label']] else T["template"]["mismatch"]
-            fallback_explanation = random.choice(static_templates).format(
+            # --- ULTRA-SAFE FALLBACK FOR THE RANDOM TEMPLATES ---
+            # Try to fetch from translations file regardless of 'template' or 'templates' spelling
+            trans_templates = T.get("template") or T.get("templates") or {}
+            
+            # Decide if it's a match or mismatch branch
+            is_match = not res_content or id_title == label_map[res_content['label']]
+            branch_key = "match" if is_match else "mismatch"
+            
+            # Pick the list from file, or fall back to a hardcoded baseline list if dict is empty
+            if trans_templates and branch_key in trans_templates:
+                static_list = trans_templates[branch_key]
+            else:
+                # Absolute hardcoded safe fallback text in case dictionary parsing acts up
+                if st.session_state["lang"] == "RO":
+                    static_list = ["Analiza sistemului indică un stil preponderent {label_v}."]
+                else:
+                    static_list = ["System analysis indicates a predominantly {label_v} style."]
+
+            fallback_explanation = random.choice(static_list).format(
                 label_s=label_title_str, 
                 label_v=VERDICT_INFO[final_id]["label"]
             )
@@ -280,11 +280,9 @@ if st.button(T["analyze_btn"], type="primary"):
                 st.session_state["lang"]
             )
             
-            # If Gemini successfully generated a text, override the static template
             if dynamic_exp:
                 verdict_final["explanation"] = dynamic_exp
 
-        # Async telemetry logs saving
         log_security_event("VERIFY", 1, f"Analyzed item from {source_domain}. Result: {verdict_final['label']}")
         log_analysis_to_gsheets(titlu_analiza, source_domain, verdict_final['label'], verdict_final['score'])
 
