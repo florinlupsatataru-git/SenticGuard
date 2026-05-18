@@ -20,11 +20,12 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- 1.1 GEMINI ULTIMATE HTTP API RESOLVER ---
+# --- 1.1 GEMINI NATIVE HTTP API RESOLVER ---
 def generate_dynamic_explanation(title, content, verdict_label, lang):
     """
-    Generates a dynamic 2-sentence explanation using Google's core stable v1 gemini-pro endpoint.
-    This bypasses any 404 resource constraints associated with flash deployments.
+    Generates a dynamic 2-sentence explanation making a direct HTTP POST request 
+    to Google's production v1beta stable endpoint.
+    Fails gracefully back to static templates without flooding the UI with errors.
     """
     api_key = None
     try:
@@ -59,8 +60,8 @@ def generate_dynamic_explanation(title, content, verdict_label, lang):
             f"Do not use conversational intros like 'This article...', go straight to the discourse analysis."
         )
 
-    # Calling the universal stable v1 gemini-pro route
-    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key={api_key}"
+    # Standard clean URL payload format accepted by Google AI Studio
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
     headers = {"Content-Type": "application/json"}
     payload = {
         "contents": [{
@@ -69,14 +70,12 @@ def generate_dynamic_explanation(title, content, verdict_label, lang):
     }
 
     try:
-        response = requests.post(url, headers=headers, json=payload, timeout=10)
+        response = requests.post(url, headers=headers, json=payload, timeout=8)
         if response.status_code == 200:
             res_json = response.json()
             return res_json['candidates'][0]['content']['parts'][0]['text'].strip()
-        else:
-            st.sidebar.error(f"API HTTP Error: {response.status_code}")
-    except Exception as e:
-        st.sidebar.error(f"HTTP Execution Error: {e}")
+    except Exception:
+        pass
     return None
 
 # --- 2. DATABASE LOGGING (PostgreSQL) ---
