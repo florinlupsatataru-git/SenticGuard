@@ -20,13 +20,13 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- 1.1 GEMINI NATIVE HTTP API RESOLVER (FĂRĂ ARANJAMENTE SUB PREȘ) ---
+# --- 1.1 GEMINI DYNAMIC CATALOG DISCOVERY RESOLVER ---
 def generate_dynamic_explanation(title, content, verdict_label, lang):
     """
-    Generates a dynamic 2-sentence explanation using a rock-solid HTTP request.
-    NO MORE SILENT CATCHES. If it fails, it prints the real raw network logs.
+    Dynamically discovers available models on the account using ListModels,
+    then targets the first valid text generation endpoint automatically.
     """
-    # Safe secret fetching
+    # Secret fetching
     if "gemini_api" in st.secrets and "api_key" in st.secrets["gemini_api"]:
         api_key = st.secrets["gemini_api"]["api_key"]
     elif "gemini" in st.secrets and "api_key" in st.secrets["gemini"]:
@@ -35,9 +35,33 @@ def generate_dynamic_explanation(title, content, verdict_label, lang):
         api_key = st.secrets.get("GEMINI_API_KEY")
 
     if not api_key:
-        st.error("❌ Eroare critică: Cheia API Gemini lipsește complet din secrets.toml!")
+        st.error("❌ Erroare critică: Cheia API Gemini lipsește din secrets.toml!")
         return None
 
+    # Step 1: Query Google's live catalog to see what models this exact key is allowed to use
+    list_url = f"https://generativelanguage.googleapis.com/v1beta/models"
+    params = {"key": api_key}
+    
+    selected_model_path = None
+    try:
+        catalog_response = requests.get(list_url, params=params, timeout=5)
+        if catalog_response.status_code == 200:
+            models_data = catalog_response.json().get("models", [])
+            # Find the first model that supports content generation
+            for m in models_data:
+                if "generateContent" in m.get("supportedGenerationMethods", []):
+                    selected_model_path = m.get("name") # e.g., "models/gemini-1.5-flash" or alternative
+                    break
+        else:
+            st.error(f"⚠️ Catalog Fetch Failed: {catalog_response.status_code} - {catalog_response.text}")
+    except Exception as e:
+        st.error(f"⚠️ Catalog Network Fault: {e}")
+
+    # Step 2: If no model was discovered, use a desperate fallback string
+    if not selected_model_path:
+        selected_model_path = "models/gemini-1.5-flash" # Standard guess if discovery fails
+
+    # Build prompt
     context_text = f"Titlu: {title}"
     if content and content.strip():
         context_text += f"\nContinut: {content[:1000]}"
@@ -47,7 +71,7 @@ def generate_dynamic_explanation(title, content, verdict_label, lang):
             f"Explică pe un ton sociologic și echilibrat, în maximum două propoziții scurte, "
             f"de ce textul următor a fost clasificat drept '{verdict_label}'.\n\n"
             f"{context_text}\n\n"
-            f"Nu folosi introduceri precum 'Acest articol...', mergi direct la subiectul analizei discursului."
+            f"Nu foloi introduceri precum 'Acest articol...', mergi direct la subiectul analizei discursului."
         )
     else:
         prompt = (
@@ -57,11 +81,8 @@ def generate_dynamic_explanation(title, content, verdict_label, lang):
             f"Do not use conversational intros like 'This article...', go straight to the discourse analysis."
         )
 
-    # Clean, verified production URL
-    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
-    
-    # We pass the key as a clean query parameter dictionary, preventing parsing breaks
-    params = {"key": api_key}
+    # Step 3: Call the dynamically resolved model path safely
+    url = f"https://generativelanguage.googleapis.com/v1beta/{selected_model_path}:generateContent"
     headers = {"Content-Type": "application/json"}
     payload = {
         "contents": [{
@@ -69,15 +90,13 @@ def generate_dynamic_explanation(title, content, verdict_label, lang):
         }]
     }
 
-    # No try-except here. Let it scream if it fails!
     response = requests.post(url, headers=headers, json=payload, params=params, timeout=10)
     
     if response.status_code == 200:
         res_json = response.json()
         return res_json['candidates'][0]['content']['parts'][0]['text'].strip()
     else:
-        # This will render EXACTLY in the middle of the screen if Google rejects us
-        st.error(f"💥 Google API Server Refusal! Status: {response.status_code} - Response Text: {response.text}")
+        st.error(f"💥 Live Model Target Refusal ({selected_model_path})! Status: {response.status_code} - {response.text}")
         return None
 
 # --- 2. DATABASE LOGGING (PostgreSQL) ---
