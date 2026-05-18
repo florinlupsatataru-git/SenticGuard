@@ -2,8 +2,8 @@ import streamlit as st
 import random
 import pandas as pd
 import psycopg2
-import google.generativeai as genai
-import toml
+import requests
+import json
 from transformers import pipeline
 from newspaper import Article, Config
 from streamlit_gsheets import GSheetsConnection
@@ -20,33 +20,28 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- 1.1 GEMINI AI INITIALIZATION ---
-def initialize_gemini():
+# --- 1.1 GEMINI NATIVE HTTP API RESOLVER ---
+def generate_dynamic_explanation(title, content, verdict_label, lang):
     """
-    Initializes Google Gemini API checking multiple configurations, 
-    prioritizing the exact [gemini_api] block from your secrets.toml.
-    Uses 'gemini-pro' to bypass v1beta route/model structure compatibility issues.
+    Generates a dynamic 2-sentence explanation making a direct HTTP POST request 
+    to Google's API, bypassing SDK version mismatch completely.
     """
+    # 1. Retrieve the API Key safely from your secrets.toml structure
+    api_key = None
     try:
         if "gemini_api" in st.secrets and "api_key" in st.secrets["gemini_api"]:
-            genai.configure(api_key=st.secrets["gemini_api"]["api_key"])
-            # 'gemini-pro' is universally supported on legacy v1beta API endpoints
-            return genai.GenerativeModel('gemini-pro')
+            api_key = st.secrets["gemini_api"]["api_key"]
         elif "gemini" in st.secrets and "api_key" in st.secrets["gemini"]:
-            genai.configure(api_key=st.secrets["gemini"]["api_key"])
-            return genai.GenerativeModel('gemini-pro')
+            api_key = st.secrets["gemini"]["api_key"]
         elif "GEMINI_API_KEY" in st.secrets:
-            genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-            return genai.GenerativeModel('gemini-pro')
-    except Exception as e:
-        st.sidebar.error(f"Gemini Init Error: {e}")
-    return None
-
-def generate_dynamic_explanation(model_gemini, title, content, verdict_label, lang):
-    """Generates a dynamic 2-sentence explanation extracting cleanly from Gemini response object."""
-    if not model_gemini:
+            api_key = st.secrets["GEMINI_API_KEY"]
+    except Exception:
         return None
-        
+
+    if not api_key:
+        return None
+
+    # 2. Build the precise sociological prompt
     context_text = f"Titlu: {title}"
     if content and content.strip():
         context_text += f"\nContinut: {content[:1000]}"
@@ -66,26 +61,27 @@ def generate_dynamic_explanation(model_gemini, title, content, verdict_label, la
             f"Do not use conversational intros like 'This article...', go straight to the discourse analysis."
         )
 
-    try:
-        response = model_gemini.generate_content(prompt)
-        
-        # Modern defensive resolution for Google GenerativeAI response objects
-        if hasattr(response, 'text') and response.text:
-            return response.text.strip()
-        
-        # Alternative fallback extract if .text blocks on parsing
-        if hasattr(response, 'parts') and response.parts:
-            return response.parts[0].text.strip()
-            
-        if hasattr(response, 'candidates') and response.candidates:
-            return response.candidates[0].content.parts[0].text.strip()
-    except Exception as e:
-        st.sidebar.error(f"Gemini Execution Error: {e}")
-        return None
-    return None
+    # 3. Direct HTTP request mapping via Google API endpoint
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+    headers = {"Content-Type": "application/json"}
+    payload = {
+        "contents": [{
+            "parts": [{"text": prompt}]
+        }]
+    }
 
-# Initialize the Gemini model instance globally
-gemini_model = initialize_gemini()
+    try:
+        response = requests.post(url, headers=headers, json=payload, timeout=10)
+        if response.status_code == 200:
+            res_json = response.json()
+            # Extract text safely from the nested JSON response architecture
+            return res_json['candidates'][0]['content']['parts'][0]['text'].strip()
+        else:
+            # Print the direct raw API server status code error in the sidebar if it bugs
+            st.sidebar.error(f"API HTTP Error: {response.status_code} - {response.text}")
+    except Exception as e:
+        st.sidebar.error(f"HTTP Execution Error: {e}")
+    return None
 
 # --- 2. DATABASE LOGGING (PostgreSQL) ---
 def get_db_connection():
@@ -293,8 +289,8 @@ if st.button(T["analyze_btn"], type="primary"):
             }
 
             # --- DYNAMIC GEMINI EXPLANATION GENERATION ---
+            # Call the pure HTTP method bypassing google-generativeai completely
             dynamic_exp = generate_dynamic_explanation(
-                gemini_model, 
                 titlu_analiza, 
                 text_analiza, 
                 VERDICT_INFO[final_id]["label"], 
