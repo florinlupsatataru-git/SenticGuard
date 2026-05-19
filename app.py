@@ -42,22 +42,34 @@ def log_event(ip, event_type, severity, desc):
         browser = request.headers.get('User-Agent')
         ref = request.headers.get('Referer')
         cur.execute(
-            "INSERT INTO security_logs (ip_address, event_type, severity, description, browser_info, referrer) VALUES (%s, %s, %s, %s, %s, %s)",
+            "INSERT INTO security_logs (ip_address, event_type, severity, description, browser, referer) VALUES (%s, %s, %s, %s, %s, %s)",
             (ip, event_type, severity, desc, browser, ref)
         )
         conn.commit()
         cur.close()
         conn.close()
-    except Exception as e: 
-        print(f"DB Log Error: {e}")
+    except Exception as e:
+        print(f"Database Logging Error: {str(e)}")
 
-def is_banned(ip):
-    """Check if an IP is permanently banned"""
+def ban_ip(ip):
+    """Add a malicious IP address to the banned_ips database table"""
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM security_logs WHERE ip_address = %s AND severity = 10", (ip,))
-        banned = cur.fetchone()[0] > 0
+        cur.execute("INSERT INTO banned_ips (ip_address) VALUES (%s) ON CONFLICT DO NOTHING", (ip,))
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print(f"Database Banning Error: {str(e)}")
+
+def is_banned(ip):
+    """Check if an IP address exists in the banned_ips table"""
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT 1 FROM banned_ips WHERE ip_address = %s", (ip,))
+        banned = cur.fetchone() is not None
         cur.close()
         conn.close()
         return banned
@@ -68,12 +80,18 @@ def is_banned(ip):
 def update_server():
     """Endpoint for GitHub Webhook to trigger automatic git pull"""
     try:
+        # Extract the real client IP address from behind Nginx proxy for webhook logging
+        if request.headers.getlist("X-Forwarded-For"):
+            ip = request.headers.getlist("X-Forwarded-For")[0].split(',')[0].strip()
+        else:
+            ip = request.remote_addr
+
         # Executes git pull in the project directory
         # Make sure the path matches your server structure
         project_dir = '/home/ubuntu/senticguard'
         subprocess.Popen(['git', 'pull', 'origin', 'main'], cwd=project_dir)
         
-        log_event(request.remote_addr, "AUTO_UPDATE", 1, "Git pull triggered via Webhook")
+        log_event(ip, "AUTO_UPDATE", 1, "Git pull triggered via Webhook")
         return 'Server updated successfully', 200
     except Exception as e:
         return str(e), 500
@@ -81,12 +99,21 @@ def update_server():
 @app.route('/')
 def public_home():
     """Main entry point: logs the visit and redirects to the public Streamlit app"""
-    ip = request.remote_addr
+    # Extract the real client IP address from behind Nginx proxy
+    if request.headers.getlist("X-Forwarded-For"):
+        ip = request.headers.getlist("X-Forwarded-For")[0].split(',')[0].strip()
+    else:
+        ip = request.remote_addr
+        
+    print(f"[DEBUG] Real visitor IP detected: {ip}")
+
     if is_banned(ip):
+        log_event(ip, "BANNED_ATTEMPT", 10, "Banned IP tried to access gateway")
         abort(403)
     
-    log_event(ip, "VISIT", 1, "Redirect to AI Interface")
-    # Redirect to the Streamlit Public Interface on port 8501
+    log_event(ip, "VISIT", 1, "Redirect to AI Interface via HTTPS")
+    
+    # Dynamically extract host and redirect to Streamlit app on port 8501
     host_complet = request.host.split(':')[0]
     return redirect(f"https://{host_complet}:8501")
 
@@ -95,10 +122,12 @@ def public_home():
 @app.route('/config.php')
 def honeypot():
     """Honeypot routes to catch and ban malicious scanners"""
-    ip = request.remote_addr
-    log_event(ip, "HACK_ATTEMPT", 10, f"Honeypot hit: {request.path}")
-    return abort(403)
-
-if __name__ == '__main__':
-    # Flask gateway running on port 8500
-    app.run(host='0.0.0.0', port=8500, debug=False)
+    # Extract the real client IP address from behind Nginx proxy
+    if request.headers.getlist("X-Forwarded-For"):
+        ip = request.headers.getlist("X-Forwarded-For")[0].split(',')[0].strip()
+    else:
+        ip = request.remote_addr
+        
+    log_event(ip, "HONEYPOT_HIT", 10, f"Scanner hit forbidden route: {request.path}")
+    ban_ip(ip)  # Automatically ban the malicious IP
+    abort(403)
