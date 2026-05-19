@@ -54,8 +54,8 @@ def generate_dynamic_explanation(title, content, verdict_label, lang):
     # Step 2: Establish the 4-Tier Cascade Battle Order
     tier1 = discovered_models[0] if len(discovered_models) >= 1 else "models/gemini-1.5-flash"
     tier2 = discovered_models[1] if len(discovered_models) > 1 else "models/gemini-1.5-flash"
-    tier3 = "models/gemini-1.5-flash-8b"  # Ultra-fast, low congestion version
-    tier4 = "models/gemini-pro"           # Classic stable engine
+    tier3 = "models/gemini-1.5-flash-8b"
+    tier4 = "models/gemini-pro"
 
     # Build prompt
     context_text = f"Titlu: {title}"
@@ -86,11 +86,8 @@ def generate_dynamic_explanation(title, content, verdict_label, lang):
             url = f"https://generativelanguage.googleapis.com/v1beta/{model_path}:generateContent"
             response = requests.post(url, headers=headers, json=payload, params=params, timeout=7)
             
-            # If any of the 4 threads succeeds, return the text immediately
             if response.status_code == 200:
                 return response.json()['candidates'][0]['content']['parts'][0]['text'].strip()
-                
-            # If it's a 503 (High Demand) or 429 (Rate Limit), the loop proceeds to the next model
             elif response.status_code in [429, 503, 404]:
                 continue
         except Exception:
@@ -145,7 +142,7 @@ def log_analysis_to_gsheets(url_or_text, source_domain, verdict, confidence):
     except Exception:
         pass
 
-# --- 3. LANGUAGE AND SESSION INITIALIZATION ---
+# --- 3. SESSION INITIALIZATION ---
 if "lang" not in st.session_state:
     st.session_state["lang"] = "RO"
 
@@ -153,12 +150,28 @@ if "logged_visit" not in st.session_state:
     log_security_event("VISIT", 1, "Redirect to AI Interface")
     st.session_state["logged_visit"] = True
 
-# --- 4. LANGUAGE SELECTOR ---
-col_space, col_lang = st.columns([0.85, 0.15])
-with col_lang:
-    lang_choice = st.selectbox("🌐 Language", ["Română", "English"], index=0 if st.session_state["lang"] == "RO" else 1)
+# --- 4. SIDEBAR CONFIGURATION (LEGEND & LANGUAGE SELECTOR) ---
+with st.sidebar:
+    col_icon, col_title = st.columns([0.2, 0.8])
+    with col_icon:
+        st.image("https://raw.githubusercontent.com/florinlupsatataru-git/SenticGuard/main/icon.png", width=35)
+    with col_title:
+        # Dynamic translation map lookup based on active session state language
+        temp_lang = st.session_state["lang"]
+        st.markdown(f"### {TRANSLATIONS[temp_lang]['sidebar_title']}")
+        
+    st.markdown(TRANSLATIONS[temp_lang]["system_desc"])
+    st.divider()
+    
+    # Clean language selector pushed to the bottom of the sidebar
+    lang_choice = st.selectbox(
+        "🌐 Language / Limbă", 
+        ["Română", "English"], 
+        index=0 if st.session_state["lang"] == "RO" else 1
+    )
     st.session_state["lang"] = "RO" if lang_choice == "Română" else "EN"
 
+# Refresh active translation dictionary object matching the selected language state
 T = TRANSLATIONS[st.session_state["lang"]]
 
 # --- 5. MODEL CACHING ---
@@ -204,17 +217,24 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- 8. INPUT PROCESSING (URL VS TEXT) ---
-input_mode = st.radio(T["lang_select"], [T["tab_link"], T["tab_manual"]], horizontal=True)
+# --- 8. CENTRALIZED INPUT CONTAINER ---
+# Using a clear 3-column layout grid to elegantly center the fields on wide layouts
+col_left, col_main, col_right = st.columns([0.15, 0.7, 0.15])
 
-input_data = ""
-if input_mode == T["tab_link"]:
-    input_data = st.text_input(T["url_label"], placeholder="https://www.digi24.ro/...")
-else:
-    input_data = st.text_area(T["manual_label"], placeholder="Introduceți textul aici...")
+with col_main:
+    # Use a generic string for the selection toggle wrapper to prevent structural overlaps
+    input_mode = st.radio("", [T["tab_link"], T["tab_manual"]], horizontal=True)
+
+    input_data = ""
+    if input_mode == T["tab_link"]:
+        input_data = st.text_input(T["url_label"], placeholder="https://www.digi24.ro/...")
+    else:
+        input_data = st.text_area(T["manual_label"], placeholder="Introduceți textul aici...")
+
+    analyze_clicked = st.button(T["analyze_btn"], type="primary", use_container_width=True)
 
 # --- 9. ANALYSIS LOGIC ---
-if st.button(T["analyze_btn"], type="primary"):
+if analyze_clicked:
     if not input_data.strip():
         st.warning(T["warn_no_input"])
     else:
@@ -284,7 +304,6 @@ if st.button(T["analyze_btn"], type="primary"):
                 else:
                     static_list = ["System analysis indicates a predominantly {label_v} style."]
 
-            # Generăm textul static ca fallback de bază
             fallback_explanation = random.choice(static_list).format(
                 label_s=label_title_str, 
                 label_v=localized_verdict
@@ -298,9 +317,6 @@ if st.button(T["analyze_btn"], type="primary"):
                 "explanation": fallback_explanation
             }
 
-            # --- DYNAMIC GEMINI EXPLANATION GENERATION ---
-            # Dacă funcția rulează cu succes, va suprascrie șablonul static.
-            # Dacă dă eroare pe rețea (503/404), returnează None, iar textul static rămâne intact pe ecran!
             dynamic_exp = generate_dynamic_explanation(
                 titlu_analiza, 
                 text_analiza, 
@@ -314,43 +330,34 @@ if st.button(T["analyze_btn"], type="primary"):
         log_security_event("VERIFY", 1, f"Analyzed item from {source_domain}. Result: {VERDICT_INFO[final_id]['label']}")
         log_analysis_to_gsheets(titlu_analiza, source_domain, VERDICT_INFO[final_id]['label'], verdict_final['score'])
 
-        # --- 10. RESULTS RENDERING (HTML TEMPLATE) ---
-        verdict_prefix_text = T.get('verdict_prefix', 'VERDICT:')
-        st.markdown(f"""
-            <div class="card-result {verdict_final['class']}">
-                <div class="badge-verdict badge-{verdict_final['class'].split('-')[1]}">
-                    {verdict_prefix_text} {verdict_final['label']}
+        # --- 10. RESULTS RENDERING (HTML TEMPLATE WITHIN CENTER COLUMN) ---
+        with col_main:
+            verdict_prefix_text = T.get('verdict_prefix', 'VERDICT:')
+            st.markdown(f"""
+                <div class="card-result {verdict_final['class']}">
+                    <div class="badge-verdict badge-{verdict_final['class'].split('-')[1]}">
+                        {verdict_prefix_text} {verdict_final['label']}
+                    </div>
+                    <h3 class="article-title">{titlu_analiza}</h3>
+                    <p style="font-size: 1.1rem; color: #334155; font-weight: 500; line-height: 1.5; margin-bottom: 0;">
+                        {verdict_final['explanation']}
+                    </p>
                 </div>
-                <h3 class=\"article-title\">{titlu_analiza}</h3>
-                <p style="font-size: 1.1rem; color: #334155; font-weight: 500; line-height: 1.5; margin-bottom: 0;">
-                    {verdict_final['explanation']}
-                </p>
-            </div>
-        """, unsafe_allow_html=True)
+            """, unsafe_allow_html=True)
 
-        # TECHNICAL DETAILS EXPANDER
-        with st.expander(T['deep_title']):
-            col_r1, col_r2 = st.columns(2)
-            with col_r1: 
-                st.metric(T["tech_manual_label"], res_titlu['label'])
-                st.progress(res_titlu['score'], text=f"{T['confidence']} {res_titlu['score']:.2%}")
-            
-            with col_r2: 
-                if res_content:
-                    st.metric(T["tech_content_label"], res_content['label'])
-                    st.progress(res_content['score'], text=f"{T['confidence']} {res_content['score']:.2%}")
-                else:
-                    st.info(T["tech_no_content"])
-            
-            st.divider()
-            st.write(f"**{T['tech_final_label']}** {verdict_final['score']:.2%}")
-
-# --- 11. SIDEBAR LEGEND ---
-with st.sidebar:
-    col_icon, col_title = st.columns([0.2, 0.8])
-    with col_icon:
-        st.image("https://raw.githubusercontent.com/florinlupsatataru-git/SenticGuard/main/icon.png", width=35)
-    with col_title:
-        st.markdown(f"### {T['sidebar_title']}")
-        
-    st.markdown(T["system_desc"])
+            # TECHNICAL DETAILS EXPANDER
+            with st.expander(T['deep_title']):
+                col_r1, col_r2 = st.columns(2)
+                with col_r1: 
+                    st.metric(T["tech_manual_label"], res_titlu['label'])
+                    st.progress(res_titlu['score'], text=f"{T['confidence']} {res_titlu['score']:.2%}")
+                
+                with col_r2: 
+                    if res_content:
+                        st.metric(T["tech_content_label"], res_content['label'])
+                        st.progress(res_content['score'], text=f"{T['confidence']} {res_content['score']:.2%}")
+                    else:
+                        st.info(T["tech_no_content"])
+                
+                st.divider()
+                st.write(f"**{T['tech_final_label']}** {verdict_final['score']:.2%}")
