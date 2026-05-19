@@ -80,14 +80,11 @@ def is_banned(ip):
 def update_server():
     """Endpoint for GitHub Webhook to trigger automatic git pull"""
     try:
-        # Extract the real client IP address from behind Nginx proxy for webhook logging
         if request.headers.getlist("X-Forwarded-For"):
             ip = request.headers.getlist("X-Forwarded-For")[0].split(',')[0].strip()
         else:
             ip = request.remote_addr
 
-        # Executes git pull in the project directory
-        # Make sure the path matches your server structure
         project_dir = '/home/ubuntu/senticguard'
         subprocess.Popen(['git', 'pull', 'origin', 'main'], cwd=project_dir)
         
@@ -99,7 +96,6 @@ def update_server():
 @app.route('/')
 def public_home():
     """Main entry point: logs the visit and redirects to the public Streamlit app"""
-    # Extract the real client IP address from behind Nginx proxy
     if request.headers.getlist("X-Forwarded-For"):
         ip = request.headers.getlist("X-Forwarded-For")[0].split(',')[0].strip()
     else:
@@ -113,7 +109,6 @@ def public_home():
     
     log_event(ip, "VISIT", 1, "Redirect to AI Interface via HTTPS")
     
-    # Dynamically extract host and redirect to Streamlit app on port 8501
     host_complet = request.host.split(':')[0]
     return redirect(f"https://{host_complet}:8501")
 
@@ -122,12 +117,11 @@ def public_home():
 @app.route('/config.php')
 def honeypot():
     """Honeypot routes to catch and ban malicious scanners"""
-    # Extract the real client IP address from behind Nginx proxy
     if request.headers.getlist("X-Forwarded-For"):
         ip = request.headers.getlist("X-Forwarded-For")[0].split(',')[0].strip()
     else:
         ip = request.remote_addr
         
     log_event(ip, "HONEYPOT_HIT", 10, f"Scanner hit forbidden route: {request.path}")
-    ban_ip(ip)  # Automatically ban the malicious IP
+    ban_ip(ip)
     abort(403)
