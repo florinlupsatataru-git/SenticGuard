@@ -125,3 +125,7 @@ def honeypot():
     log_event(ip, "HONEYPOT_HIT", 10, f"Scanner hit forbidden route: {request.path}")
     ban_ip(ip)
     abort(403)
+
+# Start the Flask production server on port 8500, accessible from outside the container
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=8500)
